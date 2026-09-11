@@ -496,7 +496,7 @@ wheels = [
 
 [[package]]
 name = "klujax"
-version = "0.5.0"
+version = "0.5.1"
 source = { editable = "." }
 dependencies = [
     { name = "jax" },
@@ -524,8 +524,8 @@ docs = [
 
 [package.metadata]
 requires-dist = [
-    { name = "jax", specifier = ">=0.5.0" },
-    { name = "jaxlib", specifier = ">=0.5.0" },
+    { name = "jax", specifier = ">=0.5.1" },
+    { name = "jaxlib", specifier = ">=0.5.1" },
     { name = "jaxtyping", specifier = ">=0.2.38" },
     { name = "numpy", specifier = ">=2" },
 ]

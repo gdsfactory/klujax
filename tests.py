@@ -619,6 +619,21 @@ def test_refactor_and_solve_batched(dtype):
     _log_and_test_equality(x, x_sp)
 
 
+def test_analyze_inside_jit():
+    """Regression test: analyze() must not call int() on traced values."""
+    Ai, Aj, Ax, b = _get_rand_arrs_1d(15, (n_col := 5), dtype=np.float64)
+
+    @jax.jit
+    def solve_jitted(Ai, Aj, Ax, b):
+        sym = klujax.analyze(Ai, Aj, n_col)
+        return klujax.solve_with_symbol(Ai, Aj, Ax, b, sym)
+
+    x_sp = solve_jitted(Ai, Aj, Ax, b)
+    A = jnp.zeros((n_col, n_col), dtype=np.float64).at[Ai, Aj].add(Ax)
+    x = jsp.linalg.solve(A, b)
+    _log_and_test_equality(x, x_sp)
+
+
 # RAII handle tests
 
 

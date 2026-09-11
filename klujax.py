@@ -246,6 +246,8 @@ def analyze(Ai: Array, Aj: Array, n_col: int) -> klujax_cpp.KLUSymbolic:
     Ai = jnp.asarray(Ai, dtype=jnp.int32)
     Aj = jnp.asarray(Aj, dtype=jnp.int32)
     raw_symbol = analyze_p.bind(Ai, Aj, jnp.int32(n_col))
+    if isinstance(raw_symbol, jax.core.Tracer):
+        return raw_symbol
     return klujax_cpp.KLUSymbolic(int(raw_symbol))
 
 
