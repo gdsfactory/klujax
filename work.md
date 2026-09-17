@@ -1,9 +1,10 @@
 # klujax Rust hardening plan
 
-Status: **in progress** — Stages 0–4 complete. Unsafe *operations* **164 → 69**;
-no unbounded lifetimes; no handler lint suppressions; duplication and
-`IS_COMPLEX` branches removed; `proptest` + `cargo miri` green. Stages 5–6
-remain. Supersedes
+Status: **in progress** — Stages 0–5 complete. Unsafe *operations* **164 → 69**;
+no unbounded lifetimes; no handler/klu-sys lint suppressions (only
+`engine.rs`/`error.rs` remain, for stage 6); duplication and `IS_COMPLEX`
+branches removed; `proptest` + `cargo miri` green; `klu-sys` layouts asserted
+against the header. Stage 6 remains. Supersedes
 the previous migration plan (the migration is done: Rust `cdylib`, XLA FFI,
 `klu-sys` statically linking SuiteSparse, Python via ctypes/`pycapsule`; 130
 pytest + sax downstream green on macOS/Linux).
@@ -227,30 +228,28 @@ no panics on malformed input ✓. **Met.**
 
 ## Stage 5 — Make `klu-sys` layout-safe
 
-Goal: stop hand-maintaining C struct layouts that can silently drift.
+Status: **complete** via option B (layout assertions).
 
-Current problem: `klu_common` is fully hand-mirrored; `klu_symbolic` is a
-*partial* struct (only fields up to `n`), so it compiles even if the header
-changes.
+Was: `klu_common` fully hand-mirrored, but `klu_symbolic` was *partial* (only
+fields up to `n`), so it would compile even if the header changed.
 
-Plan (pick one; prefer A if `libclang` is acceptable at build time):
+- [x] **B. Layout assertions** chosen over bindgen (keeps the build free of a
+      `libclang` build-dependency, consistent with the hand-written XLA ABI).
+- [x] **A. bindgen**: declined (option B suffices; revisit if the binding
+      surface grows).
+- [x] Fully defined `klu_symbolic` (all fields) instead of a partial mirror.
+- [x] `layout_matches_vendored_header` test: compiles a tiny C program against
+      the vendored `klu.h` and asserts `sizeof`/`offsetof` for `klu_common`
+      (size, `status`) and `klu_symbolic` (size, `n`, `do_btf`) against the Rust
+      structs. A header bump that changes layout now fails a test, not at
+      runtime.
+- [x] `crates/klu-sys/README.md` documents the pinned version (v7.5.0) and the
+      update procedure.
+- [x] Removed the `klu-sys` `undocumented_unsafe_blocks` allow (the only
+      remaining unsafe block is SAFETY-commented).
 
-- [ ] **A. bindgen**: generate bindings from the vendored `vendor/SuiteSparse`
-      headers in `klu-sys/build.rs` (`bindgen` build-dependency). Map the
-      generated names to the existing `klu-sys` API to avoid churn in
-      `engine.rs`.
-- [ ] **B. Layout assertions**: if bindgen is undesirable, add `const` size/
-      offset assertions (mirroring `xla_ffi::abi_tests`) for `klu_common`,
-      `klu_symbolic`, `klu_numeric`, computed from the C header values.
-- [ ] Fully define `klu_symbolic` (all fields) or restrict access to a single
-      `fn n(sym) -> usize` accessor with a documented contract.
-- [ ] Add a "header drift" test: parse the vendored `klu.h` for `sizeof`/
-      `offsetof` expectations (or bindgen output) and assert against Rust.
-- [ ] Document the supported SuiteSparse version and the update procedure in
-      `crates/klu-sys/README.md`.
-
-Exit criteria: struct layouts are generated or asserted; a header bump that
-changes layout fails a test/compile, not at runtime.
+Exit criteria: layouts asserted ✓; header drift fails a test ✓; version +
+update procedure documented ✓. **Met.**
 
 ---
 
@@ -322,6 +321,7 @@ unchanged after every stage.
 
 | Date | Change |
 |---|---|
+| 2026-03-21 | Stage 5 (complete): fully defined `klu_symbolic`; added `layout_matches_vendored_header` (compiles `klu.h`, asserts `sizeof`/`offsetof` vs Rust); documented the pinned version in `crates/klu-sys/README.md`; removed the `klu-sys` unsafe-doc allow. All gates green. |
 | 2026-03-21 | Stage 4 (complete): `proptest` for `coo_to_csc` validity + transpose round-trip; `#[cfg(not(miri))]` gates the KLU tests; `just miri` runs 9 pure-Rust tests green (isolation disabled for proptest persistence). All gates green. |
 | 2026-03-21 | Stage 3 (complete): extracted `to_col_major`/`to_row_major` (+ round-trip test) and `gather_ax`; collapsed `IS_COMPLEX` into `Scalar::lu_*` trait methods and deleted the `*_t` helpers. Switched the unsafe budget metric to *operations* (`unsafe {` + `unsafe impl`): **164 → 69**. All gates green. |
 | 2026-03-21 | Stage 2 (complete): macro-generated the 21 handlers with `# Safety` docs + explicit unsafe scopes; removed all handler lint suppressions (`missing_safety_doc`, `undocumented_unsafe_blocks`, `unsafe_op_in_unsafe_fn`, `too_many_arguments`); clippy still deny-clean. All gates green. |

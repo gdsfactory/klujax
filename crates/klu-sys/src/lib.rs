@@ -5,21 +5,17 @@
 //! `KLUJAX_SUITESPARSE_DIR`).
 
 // TODO(hardening/stage-5): generated/asserted layouts + documented unsafe.
-#![allow(
-    non_camel_case_types,
-    non_snake_case,
-    clippy::undocumented_unsafe_blocks
-)]
+#![allow(non_camel_case_types, non_snake_case)]
 
 use core::ffi::{c_int, c_void};
 
 /// `KLU_OK`.
 pub const KLU_OK: c_int = 0;
 
-/// `klu_symbolic` (leading fields; `n` is all we read).
+/// `klu_symbolic` (full layout, mirrored from `klu.h`).
 ///
-/// The full struct is public in `klu.h`; trailing fields are omitted because
-/// they do not affect the offset of `n`.
+/// Layout is asserted against the vendored header by
+/// `layouts_match_vendored_header`.
 #[repr(C)]
 pub struct klu_symbolic {
     pub symmetry: f64,
@@ -28,6 +24,16 @@ pub struct klu_symbolic {
     pub unz: f64,
     pub Lnz: *mut f64,
     pub n: i32,
+    pub nz: i32,
+    pub P: *mut i32,
+    pub Q: *mut i32,
+    pub R: *mut i32,
+    pub nzoff: i32,
+    pub nblocks: i32,
+    pub maxblock: i32,
+    pub ordering: i32,
+    pub do_btf: i32,
+    pub structural_rank: i32,
 }
 
 /// Opaque `klu_numeric`.
@@ -160,6 +166,7 @@ mod tests {
     use core::mem::MaybeUninit;
 
     fn new_common() -> klu_common {
+        // SAFETY: `klu_defaults` fully initialises the struct in place.
         unsafe {
             let mut common = MaybeUninit::<klu_common>::uninit();
             klu_defaults(common.as_mut_ptr());
@@ -168,7 +175,100 @@ mod tests {
     }
 
     #[test]
+    fn layout_matches_vendored_header() {
+        use std::path::PathBuf;
+        use std::process::Command;
+
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = std::env::var("KLUJAX_SUITESPARSE_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                let sub = manifest.join("../../vendor/SuiteSparse");
+                if sub.join("KLU/Include/klu.h").exists() {
+                    sub
+                } else {
+                    manifest.join("../../suitesparse")
+                }
+            });
+        if !root.join("KLU/Include/klu.h").exists() {
+            eprintln!("skipping: no SuiteSparse header at {}", root.display());
+            return;
+        }
+        let inc_flags: Vec<String> = [
+            "SuiteSparse_config",
+            "AMD/Include",
+            "COLAMD/Include",
+            "BTF/Include",
+            "KLU/Include",
+        ]
+        .iter()
+        .map(|d| format!("-I{}", root.join(d).display()))
+        .collect();
+
+        let dir = std::env::temp_dir().join(format!("klujax_layout_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let c_path = dir.join("layout.c");
+        std::fs::write(
+            &c_path,
+            r#"
+#include <stdio.h>
+#include <stddef.h>
+#include "klu.h"
+int main(void) {
+    printf("common_size %zu\n", sizeof(klu_common));
+    printf("common_status_off %zu\n", offsetof(klu_common, status));
+    printf("symbolic_size %zu\n", sizeof(klu_symbolic));
+    printf("symbolic_n_off %zu\n", offsetof(klu_symbolic, n));
+    printf("symbolic_do_btf_off %zu\n", offsetof(klu_symbolic, do_btf));
+    return 0;
+}
+"#,
+        )
+        .unwrap();
+        let bin = dir.join("layout");
+        let cc = std::env::var("CC").unwrap_or_else(|_| "cc".to_owned());
+        let ok = Command::new(&cc)
+            .args(&inc_flags)
+            .arg(&c_path)
+            .arg("-o")
+            .arg(&bin)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !ok {
+            eprintln!("skipping: no usable C compiler ({cc})");
+            return;
+        }
+        let text =
+            String::from_utf8_lossy(&Command::new(&bin).output().unwrap().stdout).to_string();
+        let get = |key: &str| -> usize {
+            text.lines()
+                .find_map(|l| {
+                    let mut it = l.split_whitespace();
+                    (it.next() == Some(key)).then(|| it.next().unwrap().parse().unwrap())
+                })
+                .unwrap_or_else(|| panic!("missing {key} in:\n{text}"))
+        };
+
+        assert_eq!(core::mem::size_of::<klu_common>(), get("common_size"));
+        assert_eq!(
+            core::mem::offset_of!(klu_common, status),
+            get("common_status_off")
+        );
+        assert_eq!(core::mem::size_of::<klu_symbolic>(), get("symbolic_size"));
+        assert_eq!(
+            core::mem::offset_of!(klu_symbolic, n),
+            get("symbolic_n_off")
+        );
+        assert_eq!(
+            core::mem::offset_of!(klu_symbolic, do_btf),
+            get("symbolic_do_btf_off")
+        );
+    }
+
+    #[test]
     fn solve_2x2_diagonal_f64() {
+        // SAFETY: all pointers below are valid stack arrays/C KLU handles.
         unsafe {
             let n = 2;
             let mut ap = [0i32, 1, 2];
