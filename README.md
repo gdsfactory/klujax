@@ -177,41 +177,41 @@ def dynamic_solve(Ai, Aj, Ax, b):
 
 ## Installation
 
-The library is statically linked to the SuiteSparse C++ library. It can be installed on
-most platforms as follows:
+`klujax` is a Rust `cdylib` (built from the `klujax-ffi` crate) that **statically
+links** SuiteSparse's C KLU (via the `klu-sys` crate). It is registered with JAX
+through `jax.ffi.pycapsule` — there is no pybind11 and no compiled Python
+extension.
 
 ```bash
 pip install klujax
 ```
 
-**There exist pre-built wheels for Linux and Windows (python 3.8+).** If no compatible
-wheel is found, however, pip will attempt to install the library from source... make
-sure you have the necessary build dependencies installed (see [Installing from Source](#installing-from-source))
+Pre-built wheels are provided for common platforms. If no compatible wheel is
+found, pip builds from source (see [Installing from Source](#installing-from-source)).
 
 ## Installing from Source
 
-> NOTE: Installing from source should only be necessary when developing the library. If
-> you as the user experience an install from source please create an issue.
+> NOTE: Installing from source should only be necessary when developing the
+> library. If you experience a source install as a user, please create an issue.
 
-Before installing, clone the build dependencies:
-
-```sh
-git clone --depth 1 --branch v7.2.0 https://github.com/DrTimothyAldenDavis/SuiteSparse suitesparse
-git clone --depth 1 --branch main https://github.com/openxla/xla xla
-git clone --depth 1 --branch stable https://github.com/pybind/pybind11 pybind11
-```
-
-### Linux
-
-On linux, you'll need `gcc` and `g++`, then inside the repo:
+You need a Rust toolchain (`cargo`, see <https://rustup.rs>) and a C compiler.
+The SuiteSparse sources are vendored as a git submodule, so initialize it first:
 
 ```sh
+git clone https://github.com/gdsfactory/klujax
+cd klujax
+git submodule update --init --recursive   # vendor/SuiteSparse
 pip install .
 ```
 
-### MacOs
+`klu-sys/build.rs` compiles the needed SuiteSparse C sources
+(`SuiteSparse_config`, `AMD`, `COLAMD`, `BTF`, `KLU`) with the `cc` crate and
+links them **statically** into the cdylib. Point `KLUJAX_SUITESPARSE_DIR` at a
+different checkout to override the submodule.
 
-On MacOS, you'll need `clang`, then inside the repo:
+### Linux / macOS
+
+You need `cargo` and a C/C++ compiler (`gcc` or `clang`):
 
 ```sh
 pip install .
@@ -219,25 +219,10 @@ pip install .
 
 ### Windows
 
-On Windows, installing from source is a bit more involved as typically the build
-dependencies are not installed. To install those, download Visual Studio Community 2017
-from [here](https://my.visualstudio.com/Downloads?q=visual%20studio%202017&wt.mc_id=o~msft~vscom~older-downloads). During installation, go to Workloads and select the following workloads:
-
-- Desktop development with C++
-- Python development
-
-Then go to Individual Components and select the following additional items:
-
-- C++/CLI support
-- VC++ 2015.3 v14.00 (v140) toolset for desktop
-
-Then, download and install Microsoft Visual C++ Redistributable from [here](https://aka.ms/vs/16/release/vc_redist.x64.exe).
-
-After these installation steps, run the following commands inside a x64 Native Tools
-Command Prompt for VS 2017:
+You need `cargo` and the MSVC build tools (Visual Studio with the "Desktop
+development with C++" workload). Then, in an x64 Native Tools Command Prompt:
 
 ```cmd
-set DISTUTILS_USE_SDK=1
 pip install .
 ```
 
@@ -252,8 +237,9 @@ This library was partly based on:
 - [kagami-c/PyKLU](https://github.com/kagami-c/PyKLU), LGPL-2.1
 - [scipy.sparse](https://github.com/scipy/scipy/tree/master/scipy/sparse), BSD-3
 
-This library vendors an unmodified version of the
-[SuiteSparse](https://github.com/DrTimothyAldenDavis/SuiteSparse) libraries in its source
-(.tar.gz) distribution to allow for static linking.
+This library statically links an unmodified version of the
+[SuiteSparse](https://github.com/DrTimothyAldenDavis/SuiteSparse) libraries
+(vendored as the `vendor/SuiteSparse` git submodule and compiled by the
+`klu-sys` crate).
 This is in accordance with their
 [LGPL licence](https://github.com/DrTimothyAldenDavis/SuiteSparse/blob/dev/LICENSE.txt).

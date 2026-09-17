@@ -58,7 +58,7 @@ src = "pyproject.toml"
 src = "klujax.py"
 
 [[tool.bver.file]]
-src = "klujax.cpp"
+src = "Cargo.toml"
 
 [tool.bver.git]
 action = "commit-tag-and-push"

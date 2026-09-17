@@ -4,6 +4,10 @@
 list:
     just --list
 
+# Initialize the vendored SuiteSparse submodule
+submodule:
+    git submodule update --init --recursive
+
 # Build the Rust cdylib (release)
 rust-build:
     cargo build --release -p klujax-ffi
@@ -32,8 +36,8 @@ rust-clippy:
 rust-clean:
     cargo clean
 
-# Set up development environment (clones dependencies first)
-dev: maybe-deps bver
+# Set up development environment (initializes the SuiteSparse submodule)
+dev: submodule bver
     uv venv --python 3.13 --clear
     uv sync --all-extras --all-groups --upgrade
     uv run python setup.py build_ext --inplace
@@ -52,15 +56,6 @@ bver:
 bver:
     powershell -ExecutionPolicy ByPass -c "irm https://github.com/flaport/bver/releases/latest/download/install.ps1 | iex"
 
-# (Re-)initialize dependencies
-deps: suitesparse xla pybind11
-
-# Initialize missing dependencies only
-maybe-deps:
-    @if [ ! -d "suitesparse" ]; then just suitesparse; fi
-    @if [ ! -d "xla" ]; then just xla; fi
-    @if [ ! -d "pybind11" ]; then just pybind11; fi
-
 # Build extension in place
 inplace:
     uv run python setup.py build_ext --inplace
@@ -69,7 +64,7 @@ inplace:
 test:
     uv run pytest
 
-# Regenerate the golden corpus (requires the C++ extension)
+# Regenerate the golden corpus (uses the Rust backend)
 golden:
     PYTHONPATH=. uv run python tests_characterization/_generate_golden.py
 
@@ -84,24 +79,6 @@ docs:
 # Serve docs locally
 serve:
     uv run mkdocs serve -a localhost:8080
-
-# Clone SuiteSparse
-suitesparse:
-    rm -rf suitesparse
-    git clone --depth 1 --branch v7.5.0 https://github.com/DrTimothyAldenDavis/SuiteSparse suitesparse || true
-    cd suitesparse && rm -rf .git
-
-# Clone XLA
-xla:
-    rm -rf xla
-    git clone https://github.com/openxla/xla xla
-    cd xla && git checkout 05f004e8368c955b872126b1c978c60e33bbc5c8 && rm -rf .git
-
-# Clone pybind11
-pybind11:
-    rm -rf pybind11
-    git clone --depth 1 --branch v2.13.6 https://github.com/pybind/pybind11 pybind11
-    cd pybind11 && rm -rf .git
 
 # Clean build artifacts
 clean:
@@ -119,9 +96,6 @@ clean:
 
 # Clean everything
 clean-all: clean
-    rm -rf suitesparse
-    rm -rf xla
-    rm -rf pybind11
     rm uv.lock
 
 bump version="patch":

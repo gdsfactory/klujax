@@ -47,10 +47,6 @@ pip-delete-this-directory.txt
 pip-log.txt
 
 # folders
-/suitesparse/
-/pybind11/
-/xla
-/xla/
 .eggs/
 .hypothesis/
 .ipynb_checkpoints/

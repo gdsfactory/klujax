@@ -4,21 +4,4 @@ include Cargo.lock
 recursive-include crates *.rs *.toml *.h
 include klujax_native/__init__.py
 include scripts/*.py
-include klujax.cpp
-include pybind11/include/pybind11/*.h
-include pybind11/include/pybind11/detail/*.h
-include pybind11/include/pybind11/eigen/*.h
-include pybind11/include/pybind11/stl/*.h
-include suitesparse/AMD/Include/*.h
-include suitesparse/AMD/Source/*.c
-include suitesparse/BTF/Include/*.h
-include suitesparse/BTF/Source/*.c
-include suitesparse/COLAMD/Include/*.h
-include suitesparse/COLAMD/Source/*.c
-include suitesparse/KLU/Include/*.h
-include suitesparse/KLU/Source/*.c
-include suitesparse/LICENSE.txt
-include suitesparse/SuiteSparse_config/*.c
-include suitesparse/SuiteSparse_config/*.h
-include xla/xla/ffi/api/*.cc
-include xla/xla/ffi/api/*.h
+recursive-include tests_characterization *.py *.npz

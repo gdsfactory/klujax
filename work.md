@@ -519,9 +519,9 @@ Goal: a `klu-sys` crate that reliably builds and **statically links** SuiteSpars
 on all supported platforms, with no runtime dependency on a system
 `libklu`/`libsuitesparse`. Pattern follows `~/Projects/eigenlight/crates/umfpack`.
 
-Status: submodule, `build.rs`, `links = "klu"`, and the `cc` static compile are
-in place. macOS build/tests and static-link verification are green. Remaining
-items are cross-platform hardening, selective sources, and docs.
+Status: submodule, `build.rs`, `links = "klu"`, the `cc` static compile,
+static-link verification, selective sources, and README docs are in place.
+Remaining: cross-platform hardening (CI matrix in Stage 6).
 
 - [x] Add `vendor/SuiteSparse` git submodule pinned to **v7.5.0**
       (`.gitmodules`); anchored the root `.gitignore` `suitesparse/` rule to
@@ -546,9 +546,11 @@ items are cross-platform hardening, selective sources, and docs.
       (`amd_l*`, `btf_l_*`, `colamd_l`, `klu_l_*`, `klu_zl_*`) in `build.rs`;
       the FFI only uses the int32 (`klu_*`/`klu_z_*`) entry points. 130 pytest
       + 9 `klu-sys` tests still pass; static-link check still green.
-- [ ] Remove the legacy repo-root `suitesparse/` fallback, or document it as a
-      dev convenience.
-- [ ] Document submodule init + static linking in README/AGENTS (Stage 6).
+- [x] Remove the legacy repo-root `suitesparse/` fallback: the root checkout,
+      `pybind11`, and `xla` clones were deleted. `build.rs` keeps the root path
+      only as a documented dev convenience after the submodule and env var.
+- [x] Document submodule init + static linking in `README.md` (install and
+      source-build sections).
 
 Exit criteria: `vendor/SuiteSparse` submodule builds cleanly on Linux/macOS/
 Windows; the cdylib statically contains KLU with no dynamic SuiteSparse
@@ -561,10 +563,11 @@ dependency; `klu-sys` unit test passes.
 The SuiteSparse C library is **kept** (statically linked); only the pybind11
 C++ extension is removed.
 
-- [ ] Delete `klujax.cpp`, the `KLUJAX_BUILD_CPP` branch in `setup.py`, and the
-      `pybind11`/`xla` clone recipes; update `MANIFEST.in` and `.gitignore`.
-- [ ] Update `MANIFEST.in` / package-data for the Rust workspace; document that
-      submodules are not part of an sdist.
+- [x] Delete `klujax.cpp`, the `KLUJAX_BUILD_CPP` branch in `setup.py`, the
+      `pybind11`/`xla` clone recipes, `.clang-format`/`.clangd`; updated
+      `MANIFEST.in`, `.gitignore`, and `.pre-commit-config.yaml`.
+- [x] Update `MANIFEST.in` / package-data for the Rust workspace; submodule
+      init documented in the README (submodules are not part of an sdist).
 - [ ] Ensure wheels bundle the cdylib per platform; `pip install .` from an
       sdist needs only `cargo` + an initialized submodule.
 - [ ] CI:
@@ -573,14 +576,15 @@ C++ extension is removed.
             `cargo test`, build ext, `pytest`.
       - [ ] static-link check (Stage 5) and `scripts/ffi_smoke.py`.
       - [ ] leak tests where feasible.
-- [ ] Pre-commit: `cargo fmt --check`, `cargo clippy -D warnings`.
-- [ ] Docs:
-      - [ ] README: architecture (Rust cdylib, statically linked SuiteSparse,
+- [x] Pre-commit: `cargo fmt --check`, `cargo clippy -D warnings`.
+- [x] Docs:
+      - [x] README: architecture (Rust cdylib, statically linked SuiteSparse,
             ctypes, XLA FFI) + submodule init instructions.
       - [ ] `docs/advanced/jax-integration.md`,
             `docs/advanced/memory-management.md`.
-      - [ ] LGPL-2.1 + SuiteSparse attribution; note static linking.
-- [ ] Version bumps via `bver`: include `Cargo.toml` workspace version.
+      - [x] LGPL-2.1 + SuiteSparse attribution; note static linking.
+- [x] Version bumps via `bver`: `pyproject.toml` now bumps `Cargo.toml`
+      (workspace version) instead of `klujax.cpp`.
 - [ ] Release: sdist + wheels, publish, tag.
 
 Exit criteria: published release whose cdylib statically links SuiteSparse and
@@ -656,7 +660,9 @@ otool -L target/release/libklujax_ffi.dylib | grep -i suitesparse && echo LEAK
 
 | Date (UTC) | Change |
 |---|---|
-| 2026-03-21 | Stage 5 (selective sources): `klu-sys/build.rs` now skips the int64 (`_l`/`_zl`) variants; build/tests/static-link still green. |
+| 2026-03-21 | Stage 6 (partial): removed `klujax.cpp`, the C++ branch of `setup.py`, `pybind11`/`xla`/root-`suitesparse` checkouts, `.clang-format`/`.clangd`, and C++ entries in `MANIFEST.in`/`.gitignore`; added `cargo fmt`/`clippy` pre-commit hooks; updated README + `bver`; `just deps` → `just submodule`. 130 pytest tests still pass without the C++ extension. |
+| 2026-03-21 | Stage 5 (selective sources): `klu-sys/build.rs` skips the int64 (`_l`/`_zl`) variants; build/tests/static-link green. |
+| 2026-03-21 | Stage 5 (docs + cleanup): README documents submodule init + static linking; removed legacy root `suitesparse`/`pybind11`/`xla` checkouts. |
 | 2026-03-21 | Stage 5 (static link verified): `otool -L` shows only `libSystem`; added `scripts/check_static_link.py` + `just static-link-check`; confirmed the build compiles from `vendor/SuiteSparse` with the legacy root checkout hidden. 130 pytest + 9 klu-sys tests pass. |
 | 2026-03-21 | **Re-scope**: dropped the pure-Rust KLU port; KLU stays SuiteSparse C, built and statically linked by a `klu-sys` crate (eigenlight/UMFPACK pattern). Removed the `crates/klu` scaffolding. Added `vendor/SuiteSparse` submodule (v7.5.0) and rewrote `klu-sys/build.rs` for static linking. |
 | 2026-03-21 | Stage 3+4 (complete): switched `klujax.py` to `klujax_native` (ctypes + `jax.ffi.pycapsule`) with pure-Python handles; implemented the XLA FFI **metadata probe** response required at registration. All 130 tests pass against the Rust backend; benchmark parity confirmed. |

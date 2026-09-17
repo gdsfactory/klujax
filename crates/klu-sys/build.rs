@@ -90,8 +90,8 @@ fn main() {
 
     for dir in SOURCE_DIRS {
         let dir = root.join(dir);
-        for entry in std::fs::read_dir(&dir)
-            .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
+        for entry in
+            std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
         {
             let path = entry.unwrap().path();
             if path.extension().is_some_and(|e| e == "c") {
