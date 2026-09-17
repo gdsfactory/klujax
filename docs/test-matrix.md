@@ -3,8 +3,8 @@
 This matrix defines the behavioral contract the implementation must
 satisfy (see `work.md` Stage 0.5). It is deliberately about *behavioral*
 coverage, not line coverage: JAX tracing distorts Python line coverage, and the
-risky parts of a KLU port (ordering, BTF, fill-in, pivoting) need structural
-inputs, not more branches of the same tiny matrix.
+structural paths that matter (reducible / multi-block matrices, fill-in) need
+structural inputs, not more branches of the same tiny matrix.
 
 - ✅ covered
 - ⚪ out of scope (with reason)
@@ -77,7 +77,7 @@ Direct `n_rhs > 1` (not via `vmap`): ✅ `test_multi_rhs_direct`.
 | block-upper-triangular (reducible, multi-BTF) | spsolve + residual | ✅ `test_oracles` |
 | arrow matrix | spsolve + residual | ✅ `test_oracles` |
 | ill-conditioned | — | ❌ (expected accuracy undocumented) |
-| fill-in / `nblocks > 1` introspection | SuiteSparse introspection | ❌ (planned in Stage 5) |
+| fill-in / `nblocks > 1` introspection | SuiteSparse introspection | ❌ (not asserted via introspection) |
 
 ## Error / edge / degenerate
 
@@ -97,14 +97,14 @@ Direct `n_rhs > 1` (not via `vmap`): ✅ `test_multi_rhs_direct`.
 
 ✅ `tests_characterization/golden/{inputs,outputs}.npz`, 8 cases (real/complex,
 batched, block-triangular, `spsolve`-independent). Regenerated only via
-`_generate_golden.py`; reused unchanged as the C-vs-Rust differential harness in
-Stage 5.
+`_generate_golden.py`; reused unchanged as the migration's numerical regression
+harness.
 
 ## Known gaps / out of scope
 
 - Ill-conditioned accuracy bounds are not documented (❌).
 - Multi-block BTF / fill-in is exercised structurally but not asserted via KLU
-  introspection (❌ → Stage 5).
+  introspection (❌; structural coverage only).
 - `refactor_and_solve` AD/vmap/pmap not covered (⚪; low priority).
 - `tsolve_*` AD is out of scope because no JVP/transpose primitives are
   registered for it (⚪).
