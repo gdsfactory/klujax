@@ -8,6 +8,7 @@
 //! constructing XLA call frames.
 
 use crate::error::ErrorInfo;
+use crate::xla_ffi::dtype;
 use core::ffi::c_int;
 use klu_sys::{
     klu_analyze, klu_common, klu_defaults, klu_factor, klu_free_numeric, klu_free_symbolic,
@@ -31,6 +32,8 @@ pub struct C64 {
 pub unsafe trait Scalar: Copy + 'static {
     /// Whether this is a complex scalar type.
     const IS_COMPLEX: bool;
+    /// The matching `XLA_FFI_DataType`.
+    const DTYPE: c_int;
     /// Additive identity.
     fn zero() -> Self;
     /// `a * b`.
@@ -45,6 +48,7 @@ pub unsafe trait Scalar: Copy + 'static {
 
 unsafe impl Scalar for f64 {
     const IS_COMPLEX: bool = false;
+    const DTYPE: c_int = dtype::F64;
     fn zero() -> Self {
         0.0
     }
@@ -64,6 +68,7 @@ unsafe impl Scalar for f64 {
 
 unsafe impl Scalar for C64 {
     const IS_COMPLEX: bool = true;
+    const DTYPE: c_int = dtype::C128;
     fn zero() -> Self {
         Self { re: 0.0, im: 0.0 }
     }
@@ -321,16 +326,16 @@ pub fn analyze_raw(n_col: usize, ai: &[i32], aj: &[i32]) -> Result<u64, ErrorInf
 
 /// Numeric factorization of one matrix; returns the raw `klu_numeric*` as `u64`.
 pub fn factor_raw<T: Scalar>(ai: &[i32], aj: &[i32], ax: &[T], sym: u64) -> Result<u64, ErrorInfo> {
-    let n_col = infer_n_col(ai, aj)?;
+    let root = sym as *mut klu_symbolic;
+    if root.is_null() {
+        return Err(ErrorInfo::invalid("symbolic pointer is null"));
+    }
+    let n_col = unsafe { (*root).n as usize };
     let n_nz = ai.len();
     validate(ai, aj, 1, n_col, 1, n_nz)?;
     let (mut bi, mut bp, bk) = coo_to_csc(n_col, n_nz, ai, aj);
     let mut bx: Vec<T> = bk.iter().map(|&k| ax[k as usize]).collect();
     let mut common = new_common();
-    let root = sym as *mut klu_symbolic;
-    if root.is_null() {
-        return Err(ErrorInfo::invalid("symbolic pointer is null"));
-    }
     let num = unsafe { factor_t(&mut bp, &mut bi, &mut bx, root, &mut common) };
     if num.is_null() || common.status < KLU_OK {
         return Err(ErrorInfo::invalid(
@@ -340,40 +345,90 @@ pub fn factor_raw<T: Scalar>(ai: &[i32], aj: &[i32], ax: &[T], sym: u64) -> Resu
     Ok(num as u64)
 }
 
-/// Recompute the numeric factorization in place; returns the same handle.
-pub fn refactor_raw<T: Scalar>(
+/// Numeric factorization of a batch sharing one sparsity pattern.
+pub fn factor_batch_raw<T: Scalar>(
     ai: &[i32],
     aj: &[i32],
     ax: &[T],
+    n_lhs: usize,
     sym: u64,
-    num: u64,
-) -> Result<u64, ErrorInfo> {
-    let n_col = infer_n_col(ai, aj)?;
-    let n_nz = ai.len();
-    validate(ai, aj, 1, n_col, 1, n_nz)?;
-    let (mut bi, mut bp, bk) = coo_to_csc(n_col, n_nz, ai, aj);
-    let mut bx: Vec<T> = bk.iter().map(|&k| ax[k as usize]).collect();
-    let mut common = new_common();
+) -> Result<Vec<u64>, ErrorInfo> {
     let root = sym as *mut klu_symbolic;
-    let numeric = num as *mut klu_numeric;
-    if root.is_null() || numeric.is_null() {
-        return Err(ErrorInfo::invalid("null handle"));
+    if root.is_null() {
+        return Err(ErrorInfo::invalid("symbolic pointer is null"));
     }
-    let status = unsafe { refactor_t(&mut bp, &mut bi, &mut bx, root, numeric, &mut common) };
-    if status == 0 || common.status < KLU_OK {
-        return Err(ErrorInfo::invalid(
-            "klu_refactor/z_refactor failed (singular matrix?)",
-        ));
+    let n_col = unsafe { (*root).n as usize };
+    let n_nz = ai.len();
+    validate(ai, aj, n_lhs, n_col, 1, n_nz)?;
+    let (mut bi, mut bp, bk) = coo_to_csc(n_col, n_nz, ai, aj);
+    let mut common = new_common();
+    let mut out = Vec::with_capacity(n_lhs);
+    for i in 0..n_lhs {
+        let m = i * n_nz;
+        let mut bx: Vec<T> = (0..n_nz).map(|k| ax[m + bk[k] as usize]).collect();
+        let num = unsafe { factor_t(&mut bp, &mut bi, &mut bx, root, &mut common) };
+        if num.is_null() || common.status < KLU_OK {
+            for addr in out.drain(..) {
+                let mut p = addr as *mut klu_numeric;
+                unsafe { klu_free_numeric(&mut p, &mut common) };
+            }
+            return Err(ErrorInfo::invalid(
+                "klu_factor/z_factor failed (singular matrix?)",
+            ));
+        }
+        out.push(num as u64);
     }
-    Ok(num)
+    Ok(out)
 }
 
-fn infer_n_col(ai: &[i32], aj: &[i32]) -> Result<usize, ErrorInfo> {
-    let mut n_col = 0usize;
-    for (&a, &b) in ai.iter().zip(aj.iter()) {
-        n_col = n_col.max(a.max(b) as usize + 1);
+/// Recompute the numeric factorization of a batch in place; returns the same
+/// handles (so XLA can see the refactor -> solve dependency edge).
+pub fn refactor_batch_raw<T: Scalar>(
+    ai: &[i32],
+    aj: &[i32],
+    ax: &[T],
+    n_lhs: usize,
+    sym: u64,
+    numeric: &[u64],
+) -> Result<Vec<u64>, ErrorInfo> {
+    let root = sym as *mut klu_symbolic;
+    if root.is_null() {
+        return Err(ErrorInfo::invalid("symbolic pointer is null"));
     }
-    Ok(n_col)
+    let n_col = unsafe { (*root).n as usize };
+    let n_nz = ai.len();
+    validate(ai, aj, n_lhs, n_col, 1, n_nz)?;
+    if numeric.len() != n_lhs {
+        return Err(ErrorInfo::invalid("numeric array size must match n_lhs"));
+    }
+    let (mut bi, mut bp, bk) = coo_to_csc(n_col, n_nz, ai, aj);
+    let mut common = new_common();
+    let mut out = vec![0u64; n_lhs];
+    for i in 0..n_lhs {
+        let addr = numeric[i];
+        if addr == 0 {
+            return Err(ErrorInfo::invalid("numeric pointer is null"));
+        }
+        let m = i * n_nz;
+        let mut bx: Vec<T> = (0..n_nz).map(|k| ax[m + bk[k] as usize]).collect();
+        let status = unsafe {
+            refactor_t(
+                &mut bp,
+                &mut bi,
+                &mut bx,
+                root,
+                addr as *mut klu_numeric,
+                &mut common,
+            )
+        };
+        if status == 0 || common.status < KLU_OK {
+            return Err(ErrorInfo::invalid(
+                "klu_refactor/z_refactor failed (singular matrix?)",
+            ));
+        }
+        out[i] = addr;
+    }
+    Ok(out)
 }
 
 #[allow(clippy::too_many_arguments)]
