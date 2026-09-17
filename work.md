@@ -611,7 +611,8 @@ has no pybind11/C++; docs updated; CI green.
 - [x] `scripts/ffi_smoke.py` asserts all 21 handler + 3 C-ABI symbols exist.
 - [x] XLA ABI drift tests in `crates/klujax-ffi/src/xla_ffi.rs`.
 - [ ] Static-link regression test (Stage 5) in CI.
-- [ ] Keep/extend leak tests (`test_no_leak_*`).
+- [x] Keep leak tests (`test_no_leak_symbolic`, `test_no_leak_numeric`) in
+      `tests.py`; they pass against the Rust backend.
 
 ### Verification commands
 ```sh
