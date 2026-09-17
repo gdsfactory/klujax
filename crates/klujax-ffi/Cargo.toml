@@ -1,6 +1,9 @@
 [dependencies]
 klu-sys = { path = "../klu-sys" }
 
+[dev-dependencies]
+proptest = "1"
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 name = "klujax_ffi"

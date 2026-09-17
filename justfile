@@ -28,9 +28,11 @@ static-link-check: rust-build
 unsafe-budget:
     tools/unsafe_budget.sh
 
-# Run miri on the pure-Rust decode/COO-CSC subset (requires nightly + miri)
+# Run miri on the pure-Rust decode/COO-CSC subset (requires nightly + miri).
+# Isolation is disabled so proptest can persist failures; KLU FFI tests are
+# gated out via `#[cfg(not(miri))]`.
 miri:
-    cargo +nightly miri test -p klujax-ffi --lib
+    MIRIFLAGS="-Zmiri-disable-isolation" PROPTEST_CASES=8 cargo +nightly miri test -p klujax-ffi --lib
 
 # Cross-platform verification: build + static-link check on Linux via Docker
 verify-linux:

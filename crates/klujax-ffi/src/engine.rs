@@ -850,6 +850,7 @@ mod tests {
         (ai, aj, ax)
     }
 
+    #[cfg(not(miri))]
     #[test]
     fn solve_f64() {
         let (ai, aj, ax) = diagonal(4);
@@ -860,6 +861,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(miri))]
     #[test]
     fn analyze_factor_solve_tsolve_f64() {
         let (ai, aj, ax) = diagonal(3);
@@ -878,6 +880,7 @@ mod tests {
         assert_eq!(free_symbolic_raw(sym), 0);
     }
 
+    #[cfg(not(miri))]
     #[test]
     fn solve_c128() {
         let (ai, aj, _) = diagonal(2);
@@ -897,5 +900,54 @@ mod tests {
         let x = vec![3.0f64, 5.0];
         let b = dot_raw(&ai, &aj, &ax, &x, 1, 2, 1).unwrap();
         assert_eq!(b, vec![6.0, 20.0]);
+    }
+}
+
+/// Property tests for the pure-Rust logic (run under `cargo miri`).
+#[cfg(test)]
+mod props {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Tiny deterministic PRNG so the tests need no extra dependency.
+    fn lcg(state: &mut u64) -> u64 {
+        *state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        *state >> 33
+    }
+
+    proptest! {
+        #[test]
+        fn coo_to_csc_is_valid_csc(n_col in 1usize..8, n_nz in 0usize..24, seed in any::<u64>()) {
+            let mut st = seed | 1;
+            let ai: Vec<i32> = (0..n_nz).map(|_| (lcg(&mut st) as usize % n_col) as i32).collect();
+            let aj: Vec<i32> = (0..n_nz).map(|_| (lcg(&mut st) as usize % n_col) as i32).collect();
+            let (bi, bp, bk) = coo_to_csc(n_col, n_nz, &ai, &aj);
+            prop_assert_eq!(bp.len(), n_col + 1);
+            prop_assert_eq!(bp[0], 0);
+            prop_assert_eq!(*bp.last().unwrap(), n_nz as i32);
+            prop_assert!(bp.windows(2).all(|w| w[0] <= w[1]));
+            for j in 0..n_col {
+                let (lo, hi) = (bp[j] as usize, bp[j + 1] as usize);
+                for &row in &bi[lo..hi] {
+                    prop_assert!(row >= 0 && (row as usize) < n_col);
+                }
+            }
+            let mut perm = bk.clone();
+            perm.sort_unstable();
+            prop_assert_eq!(perm, (0..n_nz as i32).collect::<Vec<_>>());
+        }
+
+        #[test]
+        fn transpose_round_trip_prop(
+            n_lhs in 1usize..4, n_col in 1usize..4, n_rhs in 1usize..4, seed in any::<u64>(),
+        ) {
+            let mut st = seed | 1;
+            let n = n_lhs * n_col * n_rhs;
+            let b: Vec<f64> = (0..n).map(|_| lcg(&mut st) as f64).collect();
+            let cm = to_col_major(&b, n_lhs, n_col, n_rhs);
+            prop_assert_eq!(&b, &to_row_major(&cm, n_lhs, n_col, n_rhs));
+        }
     }
 }
