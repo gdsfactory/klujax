@@ -1,7 +1,7 @@
 //! The XLA typed-FFI handler symbols registered with `jax.ffi.register_ffi_target`.
 //!
-//! With the default `c-backend` feature these decode the call frame and call the
-//! C-backed engine; without it they are compile-only stubs.
+//! Each decodes the `XLA_FFI_CallFrame` and calls the C-backed engine, which
+//! uses the statically linked SuiteSparse KLU (see the `klu-sys` crate).
 
 #![allow(clippy::too_many_arguments)]
 // Every `pub unsafe extern "C"` here is an XLA FFI handler with the uniform
@@ -11,63 +11,6 @@
 use crate::error::{guard, ErrorInfo};
 use crate::xla_ffi::{XLA_FFI_CallFrame, XLA_FFI_Error};
 
-#[cfg(not(feature = "c-backend"))]
-mod stubs {
-    use super::*;
-
-    macro_rules! stub_handler {
-        ($($name:ident),* $(,)?) => {
-            $(
-                /// XLA FFI handler (stub build).
-                ///
-                /// # Safety
-                /// `frame` must be a valid call frame passed by XLA.
-                #[no_mangle]
-                pub unsafe extern "C" fn $name(
-                    frame: *mut XLA_FFI_CallFrame,
-                ) -> *mut XLA_FFI_Error {
-                    unsafe {
-                        guard(frame, || {
-                            Err(ErrorInfo::unimplemented(concat!(
-                                stringify!($name),
-                                " is not implemented in the no-c-backend build"
-                            )))
-                        })
-                    }
-                }
-            )*
-        };
-    }
-
-    stub_handler!(
-        dot_f64,
-        dot_c128,
-        solve_f64,
-        solve_c128,
-        solve_with_symbol_f64,
-        solve_with_symbol_c128,
-        tsolve_with_symbol_f64,
-        tsolve_with_symbol_c128,
-        factor_f64,
-        factor_c128,
-        refactor_f64,
-        refactor_c128,
-        refactor_and_solve_f64,
-        refactor_and_solve_c128,
-        solve_with_numeric_f64,
-        solve_with_numeric_c128,
-        tsolve_with_numeric_f64,
-        tsolve_with_numeric_c128,
-        free_numeric,
-        free_symbolic,
-        analyze,
-    );
-}
-
-#[cfg(feature = "c-backend")]
-pub use real::*;
-
-#[cfg(feature = "c-backend")]
 mod real {
     use super::*;
     use crate::call_frame::{arg_buffer, dims, element_count, expect_dtype, ret_buffer};

@@ -3,19 +3,11 @@ name = "klujax-ffi"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "XLA typed-FFI handlers exposing the Rust KLU solver to JAX"
+description = "XLA typed-FFI handlers exposing KLU to JAX, statically linking SuiteSparse"
 
 [lib]
 name = "klujax_ffi"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-klu.workspace = true
-klu-sys = { path = "../klu-sys", optional = true }
-
-[features]
-# M1 transitional: back the handlers with the C KLU via `klu-sys`. Requires the
-# vendored SuiteSparse sources (`just deps`). Disable with `--no-default-features`
-# to build only the pure-Rust stubs.
-default = ["c-backend"]
-c-backend = ["dep:klu-sys"]
+klu-sys = { path = "../klu-sys" }

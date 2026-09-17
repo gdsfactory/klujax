@@ -16,6 +16,10 @@ rust-test:
 rust-smoke: rust-build
     python scripts/ffi_smoke.py
 
+# Verify the cdylib statically links SuiteSparse (no dynamic klu dependency)
+static-link-check: rust-build
+    python scripts/check_static_link.py
+
 # Format the Rust code
 rust-fmt:
     cargo fmt --all

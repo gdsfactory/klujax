@@ -1,43 +1,50 @@
 # klujax → Rust migration plan (non-PyO3)
 
-Status: in progress — Stage 0, 0.5, 1 complete; Stage 2 implemented; Stage 3
-and Milestone A (Stage 4, macOS) complete. Stage 5 (pure-Rust KLU port) next.
-See the status log at the end of this file.
+Status: in progress — Stages 0, 0.5, 1, 2, 3 complete; Milestone A (Stage 4,
+macOS) complete; Stage 5 static linking verified (cross-platform hardening
+remaining); Stage 6 packaging/CI/release remaining. See the status log at the
+end of this file.
 Owner: Floris
-Target: replace `klujax.cpp` (pybind11 + SuiteSparse) with a pure-Rust
-implementation exposed to Python via a `cdylib` + `ctypes` + `jax.ffi.pycapsule`,
-**without PyO3**.
+Target: replace `klujax.cpp` (pybind11) with a Rust `klujax-ffi` cdylib that
+registers XLA typed-FFI handlers via `jax.ffi.pycapsule` and **statically links
+SuiteSparse's KLU** through a `klu-sys` crate.
 
 ---
 
 ## 1. Goal & non-goals
 
 ### Goal
-- Ship `klujax` backed by a **pure-Rust KLU** implementation, reusable as a
-  standalone Rust crate.
-- Expose the XLA typed-FFI handlers as **plain `extern "C"` symbols** in a
-  `cdylib`, registered with JAX via `jax.ffi.pycapsule()` and `ctypes`.
+- Replace the pybind11 C++ extension (`klujax.cpp`) with a Rust `cdylib`
+  (`klujax-ffi`) exposing the XLA typed-FFI handlers as plain `extern "C"`
+  symbols.
+- Ship a `klu-sys` crate that **builds and statically links** the required
+  SuiteSparse libraries (`SuiteSparse_config`, `AMD`, `COLAMD`, `BTF`, `KLU`)
+  using the `cc` crate, with SuiteSparse vendored as a `vendor/SuiteSparse` git
+  submodule (same pattern as `eigenlight`'s UMFPACK crate). The resulting
+  cdylib must have **no runtime dependency on a system `libklu` /
+  `libsuitesparse`**.
+- Register targets from Python with `jax.ffi.pycapsule()` + `ctypes` (no PyO3).
 - Keep the public Python API (`klujax.solve`, `analyze`, `factor`, `refactor`,
   `solve_with_symbol`, `solve_with_numeric`, `tsolve_*`, `dot`, `coalesce`,
   `free_*`, `KLUSymbolic`, `KLUNumeric`, `KLUHandleManager`) **unchanged**.
 - Keep `tests.py` passing unchanged as the primary acceptance gate.
 
 ### Non-goals
+- **No pure-Rust KLU reimplementation.** KLU stays SuiteSparse C; we only wrap
+  and statically link it. (Earlier drafts proposed porting AMD/COLAMD/BTF/KLU
+  to Rust — that is explicitly off the table.)
 - No PyO3, no compiled Python extension, no `#[pymodule]`.
-- **No C++ at all.** Delete `klujax.cpp` and do not introduce a replacement
-  C++ shim. The XLA typed-FFI handler is implemented directly in Rust by
-  decoding `XLA_FFI_CallFrame` (feasible because none of our handlers use
-  attributes).
+- **No C++ shim.** Delete `klujax.cpp`; decode `XLA_FFI_CallFrame` directly in
+  Rust (feasible: none of our handlers use attributes).
 - Do not move JAX trace-time logic (lowerings, batching, AD, tree_util,
   `ffi_call`) into Rust. It cannot run in Rust and stays in `klujax.py`.
 - No GPU support (KLU is CPU-only, same as today).
-- No attempt to beat SuiteSparse performance in the first pass; parity first.
+- No attempt to beat SuiteSparse performance; parity first.
 
 ### Licensing note
-A faithful port of SuiteSparse/C KLU is a derivative work and stays
-**LGPL-2.1**. The repo is already LGPL-2.1, so this is consistent — but the
-standalone `klu` crate must carry LGPL too unless a clean-room reimplementation
-is done (much harder, not planned here).
+SuiteSparse is **LGPL-2.1**; statically linking it means the shipped cdylib is
+covered by LGPL-2.1, which is already the repo licence. The vendored
+SuiteSparse licence and attribution must be preserved.
 
 ---
 
@@ -46,39 +53,48 @@ is done (much harder, not planned here).
 ```
 klujax/
 ├── Cargo.toml                     # workspace
+├── .gitmodules                    # vendor/SuiteSparse
+├── vendor/
+│   └── SuiteSparse/               # git submodule, pinned to v7.5.0
 ├── crates/
-│   ├── klu/                       # pure Rust KLU stack (no FFI, no JAX)
-│   │   ├── Cargo.toml
-│   │   └── src/
-│   │       ├── lib.rs
-│   │       ├── config.rs          # SuiteSparse_config equivalent
-│   │       ├── amd.rs             # AMD ordering
-│   │       ├── colamd.rs          # COLAMD ordering
-│   │       ├── btf.rs             # block triangular form
-│   │       ├── symbolic.rs        # klu_analyze
-│   │       ├── numeric.rs         # klu_factor / klu_refactor
-│   │       ├── solve.rs           # klu_solve / klu_tsolve
-│   │       ├── complex.rs         # klu_z_* (C128)
-│   │       └── common.rs          # klu_common, status codes, memory
-│   └── klujax-ffi/                # cdylib: XLA FFI + C ABI shims
+│   ├── klu-sys/                   # builds + statically links SuiteSparse KLU
+│   │   ├── Cargo.toml             # links = "klu"; `cc` (parallel) build-dep
+│   │   ├── build.rs               # locate sources -> cc-compile -> static link
+│   │   └── src/lib.rs             # raw FFI: klu_*, klu_z_*, klu_common, klu_symbolic
+│   └── klujax-ffi/                # cdylib: XLA FFI + C ABI shims (depends on klu-sys)
 │       ├── Cargo.toml
-│       ├── build.rs               # bindgen over vendored c_api.h
-│       ├── c_api/                 # pinned copy of jaxlib's xla/ffi/api/c_api.h
+│       ├── c_api/                 # pinned jaxlib c_api.h (+ README)
 │       └── src/
 │           ├── lib.rs
+│           ├── xla_ffi.rs         # hand-written XLA C ABI types + drift tests
 │           ├── call_frame.rs      # decode XLA_FFI_CallFrame
-│           ├── error.rs           # XLA_FFI_Error creation + panic guard
-│           ├── handlers/          # one module per handler group
+│           ├── error.rs           # error creation, panic guard, metadata probe
+│           ├── engine.rs          # COO->CSC + generic (f64/C64) KLU calls
+│           ├── handlers.rs        # the 21 XLA handler symbols
 │           └── capi.rs            # plain free_* symbols for ctypes handles
-├── klujax/
-│   ├── __init__.py                # (or keep top-level klujax.py)
-│   ├── _ffi.py                    # ctypes loader + capsule + target registration
-│   └── _handles.py                # pure-Python KLUSymbolic / KLUNumeric
-├── klujax.py                      # JAX plumbing, unchanged except imports
-├── setup.py                       # custom build_ext: cargo build + copy cdylib
+├── klujax_native/__init__.py      # ctypes loader + capsule providers + handles
+├── klujax.py                      # JAX plumbing; imports klujax_native as klujax_cpp
+├── setup.py                       # CargoBuildExt: cargo build + copy cdylib
+├── scripts/ffi_smoke.py           # ABI smoke test
 ├── tests.py                       # unchanged acceptance gate
+├── tests_characterization/        # Stage 0.5 safety net + golden corpus
 └── work.md                        # this file
 ```
+
+### `klu-sys`: statically linked SuiteSparse
+
+`klu-sys/build.rs` compiles the needed SuiteSparse C sources with the `cc`
+crate into a static archive (`libsuitesparse_klu.a`) that is linked into the
+`klujax_ffi` cdylib. Source location priority:
+
+1. `$KLUJAX_SUITESPARSE_DIR`
+2. the `vendor/SuiteSparse` submodule (preferred, reproducible)
+3. repo-root `suitesparse/` from `just deps` (legacy fallback)
+
+Compiled components: `SuiteSparse_config`, `AMD`, `COLAMD`, `BTF`, `KLU` (all
+`*.c` in their `Source/` dirs). The int64 (`klu_l_*`) variants are compiled too
+so the archive is self-contained. Mirrors `~/Projects/eigenlight/crates/umfpack`.
+
 
 ### Two entry points for the same operations
 - **XLA FFI handlers** (e.g. `solve_f64`, `free_symbolic`): called by XLA
@@ -174,17 +190,17 @@ Revisit only if the hand-rolled decode actually breaks.
 
 ## 4. Milestones overview
 
-- **M0 — Prep**: decisions locked, headers vendored, baseline captured.
-- **M0.5 — Behavioral test safety net**: characterization + oracle + golden
-  corpus. Must be complete before M2 (pure-Rust port).
-- **M1 — Rust FFI seam (wrap existing C KLU)**: new Rust `cdylib` + ctypes
-  Python, algorithm still SuiteSparse C. `tests.py` green. Proves plumbing.
-- **M2 — Pure-Rust KLU port**: replace C module-by-module, differential-tested.
-- **M3 — Remove C, package, release**: pure Rust, wheels, docs, CI.
+- **M0 — Prep** ✅: decisions locked, header pinned, baseline captured.
+- **M0.5 — Behavioral test safety net** ✅: characterization + oracle + golden
+  corpus (regression contract for everything that follows).
+- **M1 — Rust FFI seam + statically linked SuiteSparse** ✅ (macOS): `klu-sys`
+  builds and statically links SuiteSparse; `klujax-ffi` implements the 21 XLA
+  handlers; Python drives it via ctypes/pycapsule. `tests.py` green.
+- **M2 — Packaging, CI, release** ⏳: remove the pybind11 C++ extension,
+  wheels/CI/docs, verify static linking per platform.
 
-Deliberately wrap-then-port: M1 de-risks the novel plumbing (XLA FFI decode,
-ctypes, packaging) with zero numerical risk; M2 then works against a stable,
-already-integrated API.
+There is deliberately **no pure-Rust-port milestone**: the SuiteSparse C KLU is
+kept and statically linked.
 
 ---
 
@@ -193,7 +209,8 @@ already-integrated API.
 Status: mostly complete — only the baseline capture is outstanding (it needs
 the vendored C++ deps).
 
-- [x] Confirm end-state: pure-Rust `klu` crate, LGPL-2.1, in-repo workspace.
+- [x] Confirm end-state: Rust `klujax-ffi` cdylib + `klu-sys` statically
+      linking SuiteSparse, LGPL-2.1, in-repo workspace.
 - [x] Confirm build tool: `cargo` invoked from a setuptools `build_ext`
       (no maturin, no PyO3).
 - [x] Confirm Python loader: `ctypes.CDLL` + `jax.ffi.pycapsule`.
@@ -296,8 +313,8 @@ distorts Python line coverage).
       outputs persisted to `tests_characterization/golden/*.npz`
       (`_generate_golden.py`, 8 cases incl. reducible real/complex).
 - [x] Golden tests compare within `1e-12`; regenerate only explicitly.
-- [x] Corpus is reused unchanged as the **C-vs-Rust differential harness** in
-      Stage 5.
+- [x] Corpus is reused unchanged as the migration's **numerical regression
+      harness** (it must stay green while the build/link layer changes).
 
 ### 0.5.10 Tooling & wiring
 - [x] Add `pytest-cov`; baseline coverage recorded in
@@ -322,10 +339,11 @@ implementation. **This stage is a prerequisite for Stage 5.**
 Status: **complete** (verified). Deviations from the draft checklist are noted
 inline.
 
-- [x] Create workspace `Cargo.toml` with members `crates/klu`,
-      `crates/klujax-ffi`.
+- [x] Create workspace `Cargo.toml` with members `crates/klu-sys`,
+      `crates/klujax-ffi`. (The original draft also had a `crates/klu` pure-Rust
+      crate; it was removed in the Stage 5 re-scope.)
 - [x] `crates/klujax-ffi/Cargo.toml`: `crate-type = ["cdylib", "rlib"]`, dep
-      `klu` (path).
+      `klu-sys` (path).
       - Deviation: **no `bindgen`/`libc`**. The XLA C ABI is hand-written in
         `src/xla_ffi.rs`, removing the libclang build dependency and making the
         offsets explicit and drift-tested.
@@ -372,21 +390,19 @@ Purpose: reproduce the entire `klujax.cpp` surface from Rust, calling the
 existing SuiteSparse C KLU behind a Rust-owned safe-ish API.
 
 ### 2.1 Vendor the C KLU behind a Rust crate
-Status: `klu-sys` + the C-backed engine landed and verified; frame handlers next.
-- [x] Keep the existing `suitesparse/` checkout (fetched by `just deps`).
-- [x] Add `crates/klu-sys` (temporary, M1-only) using the `cc` crate to compile
-      `SuiteSparse_config`, `AMD`, `COLAMD`, `BTF`, `KLU` C sources. Not a
-      default workspace member (needs `suitesparse/`); build with `-p klu-sys`
-      or `--workspace`.
+Status: `klu-sys` + the C-backed engine landed and verified.
+- [x] Add `crates/klu-sys` using the `cc` crate to compile
+      `SuiteSparse_config`, `AMD`, `COLAMD`, `BTF`, `KLU` C sources. It is a
+      normal workspace member, sourcing `vendor/SuiteSparse` (submodule),
+      `KLUJAX_SUITESPARSE_DIR`, or a root `suitesparse/` checkout.
       - [x] Expose the C `klu_*` + `klu_z_*` symbols (plus mirrored
-            `klu_common`), covered by a direct-C `solve_2x2_diagonal_f64` test.
-- [x] C-backed engine (`klujax-ffi/src/engine.rs`, feature `c-backend`) with
-      `coo_to_csc`, `analyze_raw`, `factor_raw`, `refactor_raw`,
+            `klu_common`/`klu_symbolic`), covered by a direct-C
+            `solve_2x2_diagonal_f64` test.
+- [x] C-backed engine (`klujax-ffi/src/engine.rs`) with `coo_to_csc`,
+      `analyze_raw`, `factor_raw`, `factor_batch_raw`, `refactor_batch_raw`,
       `solve_raw`, `solve_with_symbol_raw`, `tsolve_with_symbol_raw`,
       `solve_with_numeric_raw`, `dot_raw`, `free_*` for f64 **and** c128.
-      Deviation: lives in `klujax-ffi` (not `crates/klu`) so that `klu` stays
-      pure-Rust for Stage 5; the handler layer is unaffected.
-      Verified by 9 Rust unit tests (real + complex, direct + split solves).
+      Verified by Rust unit tests (real + complex, direct + split solves).
 - [x] Differential smoke test vs. a direct C call (`klu-sys` test) and
       engine-level tests.
 
@@ -497,166 +513,140 @@ Exit criteria: feature/API parity, tests green, performance parity — met.
 
 ---
 
-## Stage 5 — Pure-Rust KLU port (M2)
+## Stage 5 — Finalize `klu-sys` static SuiteSparse build
 
-Port bottom-up. Each sub-stage is differential-tested against the C oracle
-(kept behind a cargo feature `c-oracle` until Stage 6).
+Goal: a `klu-sys` crate that reliably builds and **statically links** SuiteSparse
+on all supported platforms, with no runtime dependency on a system
+`libklu`/`libsuitesparse`. Pattern follows `~/Projects/eigenlight/crates/umfpack`.
 
-Reference source (pinned v7.5.0): `suitesparse/{SuiteSparse_config,AMD,COLAMD,BTF,KLU}`.
+Status: submodule, `build.rs`, `links = "klu"`, and the `cc` static compile are
+in place. macOS build/tests and static-link verification are green. Remaining
+items are cross-platform hardening, selective sources, and docs.
 
-### 5.1 Core types & config
-- [x] `common.rs`: `KluCommon` (tol, memgrow, initmem_amd, initmem, maxwork,
-      btf, ordering, scale, halt_if_singular, status, structural_rank,
-      numerical_rank, singular_col, noffdiag), `Ordering`/`Scaling` enums with
-      C-compatible discriminants, and `KluCommon::defaults()`; tested against
-      the SuiteSparse defaults.
-- [x] `config.rs` — **not ported by design**: the Rust allocator replaces the
-      `SuiteSparse_config` malloc/free hooks. Documented here instead.
-- [x] Error/status mapping: `KluError::status() -> KluStatus` and the
-      `KluStatus` code set (`crates/klu/src/error.rs`). Mapping to
-      `XLA_FFI_Error_Code` happens in `klujax-ffi`.
-- [ ] Port the actual orderings / BTF / kernels (5.2–5.8).
+- [x] Add `vendor/SuiteSparse` git submodule pinned to **v7.5.0**
+      (`.gitmodules`); anchored the root `.gitignore` `suitesparse/` rule to
+      `/suitesparse/` so it no longer case-insensitively matches `SuiteSparse`.
+- [x] `klu-sys/Cargo.toml`: `links = "klu"` and
+      `cc = { version = "1.0.83", features = ["parallel"] }`.
+- [x] `klu-sys/build.rs`: locate sources (`KLUJAX_SUITESPARSE_DIR` ->
+      `vendor/SuiteSparse` -> root `suitesparse/`), compile
+      `SuiteSparse_config` + `AMD` + `COLAMD` + `BTF` + `KLU` with warning
+      suppression, and `build.compile("suitesparse_klu")` (static archive).
+- [x] Raw FFI bindings (`klu_*`, `klu_z_*`, `klu_common`, `klu_symbolic`) with a
+      direct-C solve test.
+- [x] Verify static linking: `otool -L` on the built cdylib shows only
+      `libSystem` — **no** `libklu`/`libsuitesparse`.
+- [x] Add an automated static-link check (`scripts/check_static_link.py` +
+      `just static-link-check`); wiring into CI is Stage 6.
+- [x] Confirm the build uses the submodule: rebuilding `klu-sys` with the
+      legacy root `suitesparse/` hidden still succeeds (compiles from
+      `vendor/SuiteSparse`).
+- [ ] Cross-platform `cc` build: Linux (gcc/clang), Windows (MSVC).
+- [ ] Decide whether to compile a *selective* source list (smaller/faster build)
+      instead of every `*.c` in AMD/COLAMD/BTF/KLU.
+- [ ] Remove the legacy repo-root `suitesparse/` fallback, or document it as a
+      dev convenience.
+- [ ] Document submodule init + static linking in README/AGENTS (Stage 6).
 
-### 5.2 Ordering — AMD
-- [ ] Port `AMD/Source/*` (amd_1, amd_2, amd_aat, amd_postorder, amd_valid,
-      amd_defaults, …).
-- [ ] Differential test: for random SPD/structure matrices, permutation matches
-      C AMD exactly.
-- [ ] Benchmark fill-in & time parity.
-
-### 5.3 Ordering — COLAMD
-- [ ] Port `COLAMD/Source/*`.
-- [ ] Differential test: exact permutation match; `colamd_recommended` sizing.
-- [ ] Wire ordering selection via `KluCommon::ordering`.
-
-### 5.4 Block triangular form — BTF
-- [ ] Port `BTF/Source/*` (`btf_maxtrans`, `btf_strongcomp`, `btf_order`).
-- [ ] Differential test: match `R`, `P`, `Q` outputs exactly.
-
-### 5.5 Symbolic analysis (`klu_analyze`)
-- [ ] Port `KLU/Source/klu_analyze*` incl. `klu_analyze_given`, BTF/ordering
-      usage, and the symbolic workspace structs.
-- [ ] Differential test: match `pinv`, `q`, `R`, `Lnz`, `nzoff`, `nblocks`,
-      `maxblock`, `Pblock`, etc. on a corpus.
-
-### 5.6 Numeric factorization
-- [ ] Port `klu_factor`, `klu_kernel`, `klu_scale`, `klu_mem`, `klu_sort`,
-      `klu_dump`, `klu_refactor` for f64.
-- [ ] Differential test: compare `Lval`, `Uval`, `Lip`, `Uip`, `P`, `Q`,
-      `R`, `p`, `nzoff` within tight tolerance (aim bitwise given faithful
-      fp order); flag any divergence.
-- [ ] Singular-matrix behavior parity (error status, not crash).
-
-### 5.7 Solve / tsolve / refactor
-- [ ] Port `klu_solve`, `klu_tsolve`, `klu_refactor`.
-- [ ] Differential test: solution vectors within tolerance for RHS batches.
-- [ ] Verify `klu_tsolve` transpose semantics (conj vs plain) matches current
-      wrapper (`conj_solve=0`).
-
-### 5.8 Complex (`klu_z_*`)
-- [ ] Port all complex variants (factor/refactor/solve/tsolve/analyze,
-      scale, kernel) reusing the generic core.
-- [ ] Differential test for C128.
-
-### 5.9 Cut over
-- [ ] Make `crates/klu` default to the pure-Rust implementation.
-- [ ] Keep C oracle behind `--features c-oracle` only for tests.
-- [ ] Re-run `tests.py` + full parity suite.
-- [ ] Benchmark vs. SuiteSparse; document any gaps (fill-in, time, memory).
-
-Exit criteria: no C KLU in the default build; all tests + parity tests green;
-performance documented.
+Exit criteria: `vendor/SuiteSparse` submodule builds cleanly on Linux/macOS/
+Windows; the cdylib statically contains KLU with no dynamic SuiteSparse
+dependency; `klu-sys` unit test passes.
 
 ---
 
-## Stage 6 — Remove C, packaging, CI, release
+## Stage 6 — Remove the C++ extension, package, CI, release
 
-- [ ] Delete `klujax.cpp`, `setup.py` C-extension logic, `suitesparse/`,
-      `xla/`, `pybind11/` clone recipes from `justfile`.
-- [ ] Delete `crates/klu-sys` and the `c-oracle` feature after final parity
-      confirmation (or keep in a `dev/` oracle crate).
-- [ ] Update `MANIFEST.in` / package-data: Rust workspace, no C sources.
-- [ ] Ensure wheels bundle the cdylib per platform; `pip install .` from sdist
-      requires only `cargo`.
+The SuiteSparse C library is **kept** (statically linked); only the pybind11
+C++ extension is removed.
+
+- [ ] Delete `klujax.cpp`, the `KLUJAX_BUILD_CPP` branch in `setup.py`, and the
+      `pybind11`/`xla` clone recipes; update `MANIFEST.in` and `.gitignore`.
+- [ ] Update `MANIFEST.in` / package-data for the Rust workspace; document that
+      submodules are not part of an sdist.
+- [ ] Ensure wheels bundle the cdylib per platform; `pip install .` from an
+      sdist needs only `cargo` + an initialized submodule.
 - [ ] CI:
       - [ ] matrix: Linux/macOS/Windows × Python 3.11–3.14.
-      - [ ] install Rust toolchain, `cargo test`, build ext, `pytest`.
-      - [ ] leak tests under `pytest -W error` where feasible.
-- [ ] Pre-commit: add `cargo fmt --check`, `cargo clippy -D warnings`.
+      - [ ] `git submodule update --init --recursive`, Rust toolchain,
+            `cargo test`, build ext, `pytest`.
+      - [ ] static-link check (Stage 5) and `scripts/ffi_smoke.py`.
+      - [ ] leak tests where feasible.
+- [ ] Pre-commit: `cargo fmt --check`, `cargo clippy -D warnings`.
 - [ ] Docs:
-      - [ ] README: architecture section (Rust core, ctypes, XLA FFI).
-      - [ ] `docs/advanced/jax-integration.md`: update ABI explanation.
-      - [ ] `docs/advanced/memory-management.md`: pure-Python handles + Rust
-            free shims; keep ghost-pointer guidance.
-      - [ ] Note LGPL-2.1 and attribution to SuiteSparse.
-- [ ] Version bumps via `bver`: update `Cargo.toml` workspace version too
-      (extend bver file list).
-- [ ] Release: build sdist + wheels, publish, tag.
+      - [ ] README: architecture (Rust cdylib, statically linked SuiteSparse,
+            ctypes, XLA FFI) + submodule init instructions.
+      - [ ] `docs/advanced/jax-integration.md`,
+            `docs/advanced/memory-management.md`.
+      - [ ] LGPL-2.1 + SuiteSparse attribution; note static linking.
+- [ ] Version bumps via `bver`: include `Cargo.toml` workspace version.
+- [ ] Release: sdist + wheels, publish, tag.
 
-Exit criteria: published release with pure-Rust core; docs updated; CI green.
+Exit criteria: published release whose cdylib statically links SuiteSparse and
+has no pybind11/C++; docs updated; CI green.
 
 ---
 
 ## Cross-cutting concerns
 
 ### Testing
-- [ ] `tests.py` unchanged is the contract for M1 and M2.
-- [ ] Stage 0.5 characterization + golden corpus is the contract for M2
-      (must be green before and after each ported module).
-- [ ] New `tests_parity.py` (cargo test + pytest) for C-vs-Rust oracle.
-- [ ] New `tests_ffi_abi.py`: assert every expected symbol exists in the
-      cdylib and that `jax.ffi.pycapsule` accepts it.
-- [ ] Add an ABI-drift test: compare generated `bindgen` enum values
-      (`S32/U64/F64/C128`) to expected constants; fail loudly on drift.
+- [x] `tests.py` unchanged is the primary acceptance gate (130 tests total with
+      the characterization suite).
+- [x] Stage 0.5 characterization + golden corpus lock the numerical contract.
+- [x] `scripts/ffi_smoke.py` asserts all 21 handler + 3 C-ABI symbols exist.
+- [x] XLA ABI drift tests in `crates/klujax-ffi/src/xla_ffi.rs`.
+- [ ] Static-link regression test (Stage 5) in CI.
 - [ ] Keep/extend leak tests (`test_no_leak_*`).
 
 ### Verification commands
 ```sh
+git submodule update --init vendor/SuiteSparse
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-just test            # pytest tests.py
-uv run pytest tests_parity.py
+just test                 # uv run pytest (tests.py + characterization + golden)
+python scripts/ffi_smoke.py
+# static-link check (macOS):
+otool -L target/release/libklujax_ffi.dylib | grep -i suitesparse && echo LEAK
 ```
 
 ### Risk register
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| `c_api.h` ABI drift across jaxlib versions | Med | High | pin header; ABI-drift test; document supported jaxlib |
-| Panic unwinds across FFI → UB | Med | High | `ffi_guard` + `catch_unwind` everywhere; clippy deny |
-| Exact fp parity impossible for port | Med | Med | tolerance-based tests; document divergence |
-| Porting AMD/COLAMD/BTF/KLU is very large | High | High | wrap-then-port staging; differential gates each module |
-| ctypes symbol visibility (Windows) | Med | Med | `#[unsafe(no_mangle)]`, exported test, CI |
-| Packaging cdylib per-platform | Med | Med | build_ext matrix; wheel test in CI |
-| Hand-rolled call-frame decode diverges | Low | Med | ABI-drift test in `tests_ffi_abi.py`; assert handler `stage == EXECUTE` and dtype/dim checks |
-| LGPL contamination of standalone crate | Low | Med | keep crate LGPL-2.1; clear attribution |
+| Submodule not initialized -> build fails | Med | Med | clear `build.rs` error; document `git submodule update --init` |
+| Accidental dynamic link to a SuiteSparse dylib | Low | High | `cc` static archive + CI `otool`/`ldd` check |
+| `c_api.h` ABI drift across jaxlib versions | Med | High | pinned header + ABI-drift tests; document supported jaxlib |
+| Panic unwinds across FFI -> UB | Med | High | `guard` + `catch_unwind`; clippy deny |
+| `cc` compile portability (MSVC/gcc/clang) | Med | Med | CI matrix; warning suppressions |
+| ctypes symbol visibility (Windows) | Med | Med | `#[no_mangle]`, smoke test, CI |
+| Packaging cdylib per-platform | Med | Med | `build_ext` matrix; wheel test in CI |
+| Hand-rolled call-frame decode diverges | Low | Med | ABI-drift tests + `stage`/dtype checks |
+| LGPL compliance for static linking | Low | Med | keep LGPL-2.1; preserve SuiteSparse licence/attribution |
 
 ### Effort sketch (rough)
-- Stage 0–4 (plumbing + wrap C): days–weeks.
-- Stage 5 (pure port): weeks–months; AMD/COLAMD/BTF are the bulk.
-- Stage 6 (release): days.
+- Stage 5 (static link finalization + verification): days.
+- Stage 6 (remove C++, CI, release): days.
 
 ### Open questions
-- [ ] Is exact SuiteSparse numerical parity required, or "functionally
-      equivalent" acceptable? (Affects how faithfully each kernel is ported
-      and the golden-corpus tolerances. **Resolve before Stage 5.**)
+- [ ] Selective vs. full source list for `klu-sys` (build time / artifact size)?
+- [ ] Policy for bumping the pinned SuiteSparse submodule version?
+- [ ] Keep the repo-root `suitesparse/` fallback or drop it in favour of the
+      submodule only?
+- [ ] Windows: is MSVC `cc` support sufficient, or is a MinGW path needed?
 - [ ] Which currently-untested behaviors (uncoalesced input, `NaN`/`Inf`,
-      degenerate sizes) are *contract* vs. *undocumented UB*? Pin in Stage 0.5.
-- [ ] Do we need the `klu_l_*` int64 variants? (Current wrapper uses int32
-      only — assume no.)
-- [ ] Keep standalone `klu` crate in this repo or split to its own repo?
-- [ ] Fallback plan if the port stalls: link SuiteSparse’s AMD/BTF C but keep
-      KLU core in Rust? (Partial-purity escape hatch.)
+      degenerate sizes) are *contract* vs. *undocumented UB*?
 
 ---
 
 ## Definition of done
-- `import klujax` loads a pure-Rust cdylib via ctypes; no pybind11, no C KLU.
+- `import klujax` loads the Rust cdylib via ctypes; no pybind11, no C++.
+- SuiteSparse KLU is **statically linked** into the cdylib with no runtime
+  dependency on a system `libklu`/`libsuitesparse` (verified per platform).
+- `klu-sys` builds from a clean clone after submodule init, on Linux/macOS/
+  Windows, and is documented.
 - `tests.py` passes unchanged on Linux/macOS/Windows, Python 3.11–3.14.
-- `klu` crate is reusable standalone and documented.
 - XLA FFI ABI pinned and drift-tested; jaxlib compatibility documented.
 - Performance parity (or documented, justified gaps) vs. the C baseline.
-- Docs and README describe the new architecture and memory model.
+- Docs and README describe the architecture, static linking, and memory model.
 - LGPL-2.1 and SuiteSparse attribution preserved.
 
 ---
@@ -665,10 +655,10 @@ uv run pytest tests_parity.py
 
 | Date (UTC) | Change |
 |---|---|
-| 2026-03-21 | Stage 5.1 (partial): expanded pure-Rust `klu::common` (KluCommon fields, Ordering/Scaling with C discriminants, defaults) + tests; `config.rs` intentionally not ported. |
-| 2026-03-21 | Stage 3+4 (complete): switched `klujax.py` to `klujax_native` (ctypes + `jax.ffi.pycapsule`) with pure-Python handles; fixed COO→CSC `bk` use in `solve_raw`; implemented the XLA FFI **metadata probe** response required at registration. All 130 tests pass against the Rust backend; benchmark parity confirmed. |
-| 2026-03-21 | Stage 2.1 (complete modulo handlers): added C-backed `engine.rs` (analyze/factor/refactor/solve/tsolve/dot/free, f64+c128) feature-gated behind `c-backend`; 9 Rust tests pass. |
-| 2026-03-21 | Stage 2.1 (partial): added `crates/klu-sys` compiling the vendored SuiteSparse C KLU via `cc`; direct-C solve test passes. |
-| 2026-03-21 | Stage 0.5 (complete): added `tests_characterization/` (shapes, dtypes, coalesce, scipy oracles + structural stress, edges/errors, AD/vmap, frozen golden corpus), `docs/test-matrix.md`, pytest-cov + 79% baseline. 130 tests pass. |
-| 2026-03-21 | Stage 0 (complete): pinned `c_api.h` from jaxlib 0.9.2; built the C++ extension against jaxlib headers; `tests.py` 79 passed; benchmark → `benchmarks/baseline.json`. Fixed Linux-only RSS probe in `tests.py` to be macOS/Windows portable. |
-| 2026-03-21 | Stage 1 (complete): Rust workspace (`klu`, `klujax-ffi`), hand-written XLA C ABI + drift tests, decode/error/guard, 21 handler stubs, C-ABI shims, `CargoBuildExt` + `klujax_native`, just recipes, ctypes smoke test. 5 Rust tests pass; clippy/fmt clean; editable install loads cdylib. |
+| 2026-03-21 | Stage 5 (static link verified): `otool -L` shows only `libSystem`; added `scripts/check_static_link.py` + `just static-link-check`; confirmed the build compiles from `vendor/SuiteSparse` with the legacy root checkout hidden. 130 pytest + 9 klu-sys tests pass. |
+| 2026-03-21 | **Re-scope**: dropped the pure-Rust KLU port; KLU stays SuiteSparse C, built and statically linked by a `klu-sys` crate (eigenlight/UMFPACK pattern). Removed the `crates/klu` scaffolding. Added `vendor/SuiteSparse` submodule (v7.5.0) and rewrote `klu-sys/build.rs` for static linking. |
+| 2026-03-21 | Stage 3+4 (complete): switched `klujax.py` to `klujax_native` (ctypes + `jax.ffi.pycapsule`) with pure-Python handles; implemented the XLA FFI **metadata probe** response required at registration. All 130 tests pass against the Rust backend; benchmark parity confirmed. |
+| 2026-03-21 | Stage 2 (implemented): `klu-sys` compiling the vendored SuiteSparse C KLU via `cc`; C-backed `engine.rs` (analyze/factor/refactor/solve/tsolve/dot/free, f64+c128); all 21 handlers. |
+| 2026-03-21 | Stage 0.5 (complete): `tests_characterization/` (shapes, dtypes, coalesce, scipy oracles + structural stress, edges/errors, AD/vmap, golden corpus), `docs/test-matrix.md`, pytest-cov 79% baseline. 130 tests pass. |
+| 2026-03-21 | Stage 0 (complete): pinned `c_api.h` from jaxlib 0.9.2; C++ baseline 79 passed; `benchmarks/baseline.json`; portable RSS probe. |
+| 2026-03-21 | Stage 1 (complete): Rust workspace, hand-written XLA C ABI + drift tests, decode/error/guard, handler stubs, `CargoBuildExt` + `klujax_native`, ctypes smoke test. |
