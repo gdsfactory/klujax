@@ -10,17 +10,41 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --dev --no-install-project
       - uses: pre-commit/action@v3.0.1
 
   pytest:
-    runs-on: ubuntu-latest
+    name: pytest (${{ matrix.os }}, ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # SuiteSparse is vendored as `vendor/SuiteSparse` and compiled by
+          # `klu-sys/build.rs` (statically linked into the cdylib).
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
       - uses: astral-sh/setup-uv@v6
-      - uses: extractions/setup-just@v2
-      - run: just deps
-      - run: uv sync --dev
-      - run: uv run python setup.py build_ext --inplace
-      - run: uv run pytest
+      - name: Build + install
+        run: |
+          uv sync --dev --python ${{ matrix.python }}
+          uv run python setup.py build_ext --inplace
+      - name: Rust tests
+        run: cargo test --workspace
+      - name: pytest
+        run: uv run pytest
+      - name: Static-link check (no dynamic SuiteSparse)
+        if: runner.os != 'Windows'
+        run: uv run python scripts/check_static_link.py
+      - name: FFI ABI smoke test
+        run: uv run python scripts/ffi_smoke.py

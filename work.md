@@ -570,12 +570,15 @@ C++ extension is removed.
       init documented in the README (submodules are not part of an sdist).
 - [ ] Ensure wheels bundle the cdylib per platform; `pip install .` from an
       sdist needs only `cargo` + an initialized submodule.
-- [ ] CI:
+- [ ] CI (workflow rewritten in `.github/workflows/test.yml`; awaiting a green
+      run on GitHub):
       - [ ] matrix: Linux/macOS/Windows × Python 3.11–3.14.
-      - [ ] `git submodule update --init --recursive`, Rust toolchain,
-            `cargo test`, build ext, `pytest`.
-      - [ ] static-link check (Stage 5) and `scripts/ffi_smoke.py`.
+      - [ ] `submodules: recursive`, Rust toolchain, `cargo test`, build ext,
+            `pytest`.
+      - [ ] static-link check (non-Windows) and `scripts/ffi_smoke.py`.
       - [ ] leak tests where feasible.
+      - [ ] `main.yml` wheel build updated for submodules + Rust (manylinux
+            installs Rust via `CIBW_BEFORE_BUILD_LINUX`); unverified.
 - [x] Pre-commit: `cargo fmt --check`, `cargo clippy -D warnings`.
 - [x] Docs:
       - [x] README: architecture (Rust cdylib, statically linked SuiteSparse,
@@ -660,6 +663,7 @@ otool -L target/release/libklujax_ffi.dylib | grep -i suitesparse && echo LEAK
 
 | Date (UTC) | Change |
 |---|---|
+| 2026-03-21 | Stage 6 (CI): rewrote `.github/workflows/test.yml` with a Linux/macOS/Windows × Python 3.11–3.14 matrix (submodules, Rust toolchain, cargo test, pytest, static-link check, ffi smoke); updated `main.yml` wheel build for submodules + Rust. YAML valid; CI run still pending. |
 | 2026-03-21 | Stage 6 (partial): removed `klujax.cpp`, the C++ branch of `setup.py`, `pybind11`/`xla`/root-`suitesparse` checkouts, `.clang-format`/`.clangd`, and C++ entries in `MANIFEST.in`/`.gitignore`; added `cargo fmt`/`clippy` pre-commit hooks; updated README + `bver`; `just deps` → `just submodule`. 130 pytest tests still pass without the C++ extension. |
 | 2026-03-21 | Stage 5 (selective sources): `klu-sys/build.rs` skips the int64 (`_l`/`_zl`) variants; build/tests/static-link green. |
 | 2026-03-21 | Stage 5 (docs + cleanup): README documents submodule init + static linking; removed legacy root `suitesparse`/`pybind11`/`xla` checkouts. |
