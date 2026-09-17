@@ -1,17 +1,17 @@
 ---
 title: Memory Management
-summary: Handle C++ pointers safely with KLUHandleManager
+summary: Handle native KLU handles safely with KLUHandleManager
 ---
 
 # Memory Management
 
-When you use the split API (`analyze`, `factor`, `refactor`), klujax creates C++ objects that live outside Python's memory management. The `KLUHandleManager` wrapper handles cleanup, but there are important rules to follow.
+When you use the split API (`analyze`, `factor`, `refactor`), klujax creates native KLU objects that live outside Python's memory management. The `KLUHandleManager` wrapper handles cleanup, but there are important rules to follow.
 
 ## The Basics
 
 ```mermaid
 flowchart TD
-    AN["klujax.analyze#40;Ai, Aj, n_col#41;"] --> HM["KLUHandleManager\n#40;wraps C++ pointer#41;"]
+    AN["klujax.analyze#40;Ai, Aj, n_col#41;"] --> HM["KLUHandleManager\n#40;wraps native handle#41;"]
     HM --> USE["Use in solve_with_symbol,\nfactor, etc."]
     USE --> FREE{"How is it freed?"}
     FREE -->|Outside JIT| AUTO["Automatic\n#40;garbage collection#41;"]
@@ -44,7 +44,7 @@ symbolic.close()
 
 ## Inside JIT (The Tricky Case)
 
-When `analyze` or `factor` is called inside a `jax.jit` function, the Python `KLUHandleManager` is converted to a symbolic tracer during tracing. The C++ pointer is allocated at runtime by XLA, but XLA doesn't know how to free it.
+When `analyze` or `factor` is called inside a `jax.jit` function, the Python `KLUHandleManager` is converted to a symbolic tracer during tracing. The native handle is allocated at runtime by XLA, but XLA doesn't know how to free it.
 
 ### The Ghost Pointer Problem
 
@@ -55,7 +55,7 @@ flowchart TD
         TR --> LOST["Python object is\nconverted to XLA value"]
     end
     subgraph "Runtime (XLA)"
-        XLA["C++ memory allocated\nby XLA at runtime"]
+        XLA["KLU memory allocated\nby XLA at runtime"]
         XLA --> LEAK["⚠️ Never freed!\n#40;memory leak#41;"]
     end
 
@@ -126,7 +126,7 @@ The handle manager tracks:
 
 | Property | Description                                                  |
 | -------- | ------------------------------------------------------------ |
-| `handle` | uint64 pointer to C++ object                                 |
+| `handle` | uint64 native KLU handle                                 |
 | `_owner` | Whether this manager owns the pointer (prevents double-free) |
 | `_freed` | Whether the resource has already been freed                  |
 

@@ -10,7 +10,7 @@ klujax.free_symbolic(symbolic, dependency=None) -> None
 klujax.free_numeric(numeric, dependency=None) -> None
 ```
 
-Explicitly free the C++ memory behind a KLU handle. You only need these inside `jax.jit`-compiled functions — outside JIT, handles are freed automatically.
+Explicitly free the native KLU memory behind a handle. You only need these inside `jax.jit`-compiled functions — outside JIT, handles are freed automatically.
 
 ## Parameters
 

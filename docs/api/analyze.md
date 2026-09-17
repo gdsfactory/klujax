@@ -23,7 +23,7 @@ Perform symbolic analysis on the sparsity pattern of a sparse matrix. This is th
 
 | Type               | Description                                                     |
 | ------------------ | --------------------------------------------------------------- |
-| `KLUHandleManager` | A handle wrapping a C++ pointer to the symbolic analysis result |
+| `KLUHandleManager` | A handle wrapping a native handle to the symbolic analysis result |
 
 ## How It Fits In
 
@@ -65,7 +65,7 @@ for Ax_t, b_t in simulation_data:
 
 ## Memory Management
 
-The returned `KLUHandleManager` wraps a C++ pointer. It cleans up automatically when garbage collected, but you can also manage it explicitly:
+The returned `KLUHandleManager` wraps a native handle. It cleans up automatically when garbage collected, but you can also manage it explicitly:
 
 ```python
 # Option 1: Let Python handle it (recommended outside JIT)

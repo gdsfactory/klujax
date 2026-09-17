@@ -1,6 +1,6 @@
 # Test coverage matrix (Rust migration)
 
-This matrix defines the behavioral contract the pure-Rust implementation must
+This matrix defines the behavioral contract the implementation must
 satisfy (see `work.md` Stage 0.5). It is deliberately about *behavioral*
 coverage, not line coverage: JAX tracing distorts Python line coverage, and the
 risky parts of a KLU port (ordering, BTF, fill-in, pivoting) need structural

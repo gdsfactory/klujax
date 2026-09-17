@@ -583,8 +583,9 @@ C++ extension is removed.
 - [x] Docs:
       - [x] README: architecture (Rust cdylib, statically linked SuiteSparse,
             ctypes, XLA FFI) + submodule init instructions.
-      - [ ] `docs/advanced/jax-integration.md`,
-            `docs/advanced/memory-management.md`.
+      - [x] `docs/advanced/jax-integration.md`,
+            `docs/advanced/memory-management.md` (C++ wording → Rust/native;
+            plus the API/analyze/free and test-matrix docs).
       - [x] LGPL-2.1 + SuiteSparse attribution; note static linking.
 - [x] Version bumps via `bver`: `pyproject.toml` now bumps `Cargo.toml`
       (workspace version) instead of `klujax.cpp`.
@@ -663,6 +664,7 @@ otool -L target/release/libklujax_ffi.dylib | grep -i suitesparse && echo LEAK
 
 | Date (UTC) | Change |
 |---|---|
+| 2026-03-21 | Stage 6 (docs): updated `docs/advanced/jax-integration.md`, `memory-management.md`, `api/analyze.md`, `api/free.md`, `test-matrix.md` from C++/pure-Rust wording to Rust + native handles. |
 | 2026-03-21 | Stage 6 (CI): rewrote `.github/workflows/test.yml` with a Linux/macOS/Windows × Python 3.11–3.14 matrix (submodules, Rust toolchain, cargo test, pytest, static-link check, ffi smoke); updated `main.yml` wheel build for submodules + Rust. YAML valid; CI run still pending. |
 | 2026-03-21 | Stage 6 (partial): removed `klujax.cpp`, the C++ branch of `setup.py`, `pybind11`/`xla`/root-`suitesparse` checkouts, `.clang-format`/`.clangd`, and C++ entries in `MANIFEST.in`/`.gitignore`; added `cargo fmt`/`clippy` pre-commit hooks; updated README + `bver`; `just deps` → `just submodule`. 130 pytest tests still pass without the C++ extension. |
 | 2026-03-21 | Stage 5 (selective sources): `klu-sys/build.rs` skips the int64 (`_l`/`_zl`) variants; build/tests/static-link green. |

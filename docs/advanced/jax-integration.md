@@ -31,15 +31,15 @@ flowchart TD
     end
 
     subgraph "JAX Dispatch"
-        BIND --> IMPL["Implementation\n#40;calls C++ via FFI#41;"]
+        BIND --> IMPL["Implementation\n#40;calls Rust via XLA FFI#41;"]
         BIND --> ABSTRACT["Abstract eval\n#40;compute output shape/dtype#41;"]
         BIND --> JVP["JVP rule\n#40;forward differentiation#41;"]
         BIND --> TRANSPOSE["Transpose rule\n#40;reverse differentiation#41;"]
         BIND --> BATCH["Batching rule\n#40;vmap#41;"]
     end
 
-    subgraph "C++ Layer (via XLA FFI)"
-        IMPL --> CPP["klujax_cpp\n#40;SuiteSparse KLU#41;"]
+    subgraph "Rust Layer (via XLA FFI)"
+        IMPL --> CPP["klujax-ffi\n#40;Rust + statically linked SuiteSparse KLU#41;"]
     end
 
     style PY fill:#6366f1,color:#fff,stroke:none
@@ -101,8 +101,8 @@ J = jax.jacrev(lambda bb: klujax.solve(Ai, Aj, Ax, bb))(b)
 | `Ax`       | Yes             | Continuous matrix values         |
 | `b` / `x`  | Yes             | Continuous vectors               |
 | `Ai`, `Aj` | No              | Integer indices — not continuous |
-| `symbolic` | No              | Opaque C++ pointer               |
-| `numeric`  | No              | Opaque C++ pointer               |
+| `symbolic` | No              | Opaque native handle (`u64`)     |
+| `numeric`  | No              | Opaque native handle (`u64`)     |
 
 ## Vectorized Batching (vmap)
 
