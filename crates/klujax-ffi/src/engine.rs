@@ -1,11 +1,14 @@
-//! C-backed KLU engine (M1 transitional).
+//! C-backed KLU engine.
 //!
-//! Mirrors the numeric logic of the original `klujax.cpp`, but calls the C KLU
-//! through `klu-sys`. Stage 5 replaces this module with the pure-Rust `klu`
-//! crate; the XLA handler layer does not change.
+//! Mirrors the numeric logic of the original `klujax.cpp`, calling the C KLU
+//! through `klu-sys`.
 //!
 //! All functions here take plain Rust slices so they can be unit-tested without
 //! constructing XLA call frames.
+
+// TODO(hardening/stage-3, stage-6): dedupe and route KLU calls through a safe
+// wrapper so this module can be `#![forbid(unsafe_code)]`; remove this allow.
+#![allow(clippy::undocumented_unsafe_blocks)]
 
 use crate::error::ErrorInfo;
 use crate::xla_ffi::dtype;

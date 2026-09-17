@@ -1,13 +1,15 @@
 //! Raw FFI bindings to the SuiteSparse C KLU library.
 //!
-//! **Transitional (M1).** This crate exists only so that the `klu` crate can be
-//! backed by the proven C implementation while the XLA FFI seam is validated.
-//! It is deleted in Stage 6 once the pure-Rust port (Stage 5) lands.
-//!
-//! The C sources are compiled from `../../suitesparse` (override with
-//! `KLUJAX_SUITESPARSE_DIR`), which is fetched by `just deps`.
+//! `klujax-ffi` calls the C KLU through this crate; the sources are statically
+//! linked from the `vendor/SuiteSparse` submodule (override with
+//! `KLUJAX_SUITESPARSE_DIR`).
 
-#![allow(non_camel_case_types, non_snake_case)]
+// TODO(hardening/stage-5): generated/asserted layouts + documented unsafe.
+#![allow(
+    non_camel_case_types,
+    non_snake_case,
+    clippy::undocumented_unsafe_blocks
+)]
 
 use core::ffi::{c_int, c_void};
 

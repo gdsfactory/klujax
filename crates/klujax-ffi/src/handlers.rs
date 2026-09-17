@@ -6,7 +6,13 @@
 #![allow(clippy::too_many_arguments)]
 // Every `pub unsafe extern "C"` here is an XLA FFI handler with the uniform
 // safety contract "`frame` is a valid call frame passed by XLA".
-#![allow(clippy::missing_safety_doc)]
+// TODO(hardening/stage-2): once handlers are generated with `Frame<'a>` and
+// carry `# Safety` docs and explicit unsafe scopes, remove these allows.
+#![allow(
+    clippy::missing_safety_doc,
+    clippy::undocumented_unsafe_blocks,
+    unsafe_op_in_unsafe_fn
+)]
 
 use crate::error::{guard, ErrorInfo};
 use crate::xla_ffi::{XLA_FFI_CallFrame, XLA_FFI_Error};

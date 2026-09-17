@@ -1,6 +1,9 @@
 [build-dependencies]
 cc = { version = "1.0.83", features = ["parallel"] }
 
+[lints]
+workspace = true
+
 [package]
 description = "Static Rust bindings to the SuiteSparse C KLU library"
 edition.workspace = true

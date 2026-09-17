@@ -1,0 +1,32 @@
+# Unsafe-code baseline (Stage 0 of work.md)
+#
+# Metric: code-only `unsafe` occurrences, i.e. `//` comments stripped first
+# (see tools/unsafe_budget.sh). The budget in tools/unsafe_budget.txt is lowered
+# as hardening stages land and must never be raised.
+#
+# Baseline (code-only): 222
+#   handlers.rs   132
+#   engine.rs      37
+#   call_frame.rs  32
+#   error.rs       15
+#   klu-sys/lib.rs  3
+#   xla_ffi.rs      2
+#   capi.rs         1
+#   lib.rs/build.rs 0
+#
+# (Raw count including comments was 223-226 depending on TODOs.)
+#
+# Pristine modules (0 unsafe):
+#   crates/klujax-ffi/src/lib.rs
+#   crates/klu-sys/build.rs
+#
+# Unbounded-lifetime / pointer-derived slice helpers to eliminate (Stage 1):
+#   crates/klujax-ffi/src/call_frame.rs: dims, as_f64, as_f64_mut, as_i32, as_u64
+#   crates/klujax-ffi/src/handlers.rs:   arg<T> -> &'static [T], ret<T> -> &'static mut [T]
+#
+# Guardrails enabled in Stage 0:
+#   [workspace.lints.rust]  unsafe_op_in_unsafe_fn = "deny"
+#   [workspace.lints.clippy] undocumented_unsafe_blocks = "deny"
+#                            missing_safety_doc = "deny"
+# Backlog modules opt out with `#![allow(...)]` + a TODO that the stage listed
+# there removes.

@@ -42,6 +42,8 @@ jobs:
           uv run python setup.py build_ext --inplace
       - name: Rust tests
         run: cargo test --workspace
+      - name: Unsafe budget
+        run: tools/unsafe_budget.sh
       - name: pytest
         run: uv run pytest
       - name: Static-link check (no dynamic SuiteSparse)

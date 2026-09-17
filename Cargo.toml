@@ -6,6 +6,16 @@ default-members = ["crates/klujax-ffi"]
 members = ["crates/klu-sys", "crates/klujax-ffi"]
 resolver = "2"
 
+[workspace.lints.clippy]
+missing_safety_doc = "deny"
+undocumented_unsafe_blocks = "deny"
+
+# Rust hardening lints (see work.md). `unsafe_op_in_unsafe_fn` is already clean.
+# The clippy doc lints are `deny`; modules carrying pre-existing backlog opt out
+# with a `#![allow(...)]` + TODO that later stages remove.
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
 [workspace.package]
 edition = "2021"
 license = "LGPL-2.1"

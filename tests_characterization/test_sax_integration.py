@@ -7,7 +7,7 @@ the flagship consumer of klujax: it uses the KLU backend by default and calls
 SAX pins ``jax<0.10`` and pulls a large dependency tree, so this module is
 skipped unless SAX is importable. Run it in a dedicated environment with::
 
-    scripts/verify_sax.sh        # or: just verify-sax
+    scripts / verify_sax.sh  # or: just verify-sax
 """
 
 from __future__ import annotations
@@ -19,11 +19,14 @@ sax = pytest.importorskip("sax")
 
 import jax  # noqa: E402
 import jax.numpy as jnp  # noqa: E402
+from sax.backends import default_backend  # noqa: E402
 
 
 def _waveguide(length: float = 10.0):
     phase = 1j * length / 10
-    return sax.reciprocal({("in0", "out0"): jnp.exp(phase), ("in1", "out1"): jnp.exp(phase)})
+    return sax.reciprocal(
+        {("in0", "out0"): jnp.exp(phase), ("in1", "out1"): jnp.exp(phase)}
+    )
 
 
 def _coupler(coupling: float = 0.5):
@@ -64,8 +67,6 @@ def _max_diff(a: dict, b: dict) -> float:
 
 def test_klu_is_the_default_backend():
     # If klujax imports, sax selects klu by default.
-    from sax.backends import default_backend
-
     assert default_backend == "klu"
 
 

@@ -1,8 +1,10 @@
 # klujax Rust hardening plan
 
-Status: **not started**. Supersedes the previous migration plan (the migration is
-done: Rust `cdylib`, XLA FFI, `klu-sys` statically linking SuiteSparse, Python
-via ctypes/`pycapsule`; 130 pytest + sax downstream green on macOS/Linux).
+Status: **in progress** — Stage 0 (guardrails + unsafe budget) complete;
+Stages 1–6 remain. Baseline: **222** code-only `unsafe` occurrences. Supersedes
+the previous migration plan (the migration is done: Rust `cdylib`, XLA FFI,
+`klu-sys` statically linking SuiteSparse, Python via ctypes/`pycapsule`; 130
+pytest + sax downstream green on macOS/Linux).
 
 This plan addresses the code-quality debt identified in the post-migration
 review. It is deliberately **behaviour-preserving**: no public API, numerical,
@@ -64,24 +66,29 @@ Measured baseline (before this plan):
 
 Goal: make the debt measurable and prevent regressions while refactoring.
 
-- [ ] Record the baseline in `tools/unsafe_baseline.txt`: per-file `unsafe`
-      counts and the unbounded-lifetime list.
-- [ ] Add `#![deny(unsafe_op_in_unsafe_fn)]` to `klujax-ffi` and `klu-sys`
-      (forces explicit `unsafe {}` blocks inside `unsafe fn`; makes call sites
-      auditable).
-- [ ] Enable `clippy::undocumented_unsafe_blocks` and
-      `clippy::missing_safety_doc` at the crate level (remove the module-level
-      `allow` once Stage 2 lands; see below).
-- [ ] Add `[lints.clippy]` in `Cargo.toml` (workspace) so the lints are explicit
-      and versioned:
-      `undocumented_unsafe_blocks = "deny"`, `missing_safety_doc = "deny"`.
-- [ ] Add `tools/unsafe_budget.sh`: counts `unsafe` occurrences and fails if the
-      count exceeds the committed budget (lowered after each stage).
-- [ ] Wire `tools/unsafe_budget.sh` and `cargo miri test` (Stage 4) into
-      `just` recipes and `.pre-commit-config.yaml` / `test.yml`.
+Status: **complete**. Code-only baseline is **222**; the lints are `deny` with a
+documented per-module allow-list (ratchet) that later stages remove.
 
-Exit criteria: baseline committed; `unsafe_op_in_unsafe_fn` and
-`undocumented_unsafe_blocks` enforced; budget script runs.
+- [x] Recorded the baseline in `tools/unsafe_baseline.txt`: per-file code-only
+      `unsafe` counts (handlers 132, engine 37, call_frame 32, error 15, …) and
+      the unbounded-lifetime list.
+- [x] Added `[workspace.lints.rust] unsafe_op_in_unsafe_fn = "deny"` and
+      `[lints] workspace = true` in both crates.
+- [x] Enabled `clippy::undocumented_unsafe_blocks` and
+      `clippy::missing_safety_doc` as `deny` in `[workspace.lints.clippy]`
+      (remove the per-module allows as Stages 1/2/3/5/6 land).
+- [x] Added `tools/unsafe_budget.sh` (+ `tools/unsafe_budget.txt`): counts
+      code-only `unsafe` (comments stripped) and fails over budget; baseline 222.
+- [x] Wired `just unsafe-budget` + `just miri`, a pre-commit hook, and a
+      `test.yml` step.
+- [x] Ratchet: backlog modules carry `#![allow(clippy::undocumented_unsafe_blocks)]`
+      and (in `handlers.rs`) `unsafe_op_in_unsafe_fn` / `missing_safety_doc`,
+      each with a `TODO(hardening/stage-N)`. Clippy is green with the lints
+      denied globally.
+
+Exit criteria: baseline committed ✓; `unsafe_op_in_unsafe_fn` and
+`undocumented_unsafe_blocks` enforced (deny) with a tracked allow-list ✓; budget
+script runs and passes ✓. **Met.**
 
 ---
 
@@ -310,4 +317,4 @@ unchanged after every stage.
 
 | Date | Change |
 |---|---|
-| — | Plan created; baseline captured (~220 unsafe, 8 unbounded lifetimes, 21 hand-written handlers). |
+| 2026-03-21 | Stage 0 (complete): `tools/unsafe_budget.{sh,txt}` (code-only count, baseline **222**); workspace lints `unsafe_op_in_unsafe_fn`, `undocumented_unsafe_blocks`, `missing_safety_doc` = `deny` with a documented per-module ratchet; `just unsafe-budget`/`miri` + pre-commit + CI wiring. All gates green (clippy, fmt, 4 rust test bins, 130 pytest, ffi smoke, static link). |

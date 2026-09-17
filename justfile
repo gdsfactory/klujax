@@ -24,6 +24,14 @@ rust-smoke: rust-build
 static-link-check: rust-build
     python scripts/check_static_link.py
 
+# Enforce the unsafe-code budget (see work.md Stage 0)
+unsafe-budget:
+    tools/unsafe_budget.sh
+
+# Run miri on the pure-Rust decode/COO-CSC subset (requires nightly + miri)
+miri:
+    cargo +nightly miri test -p klujax-ffi --lib
+
 # Cross-platform verification: build + static-link check on Linux via Docker
 verify-linux:
     bash scripts/verify_linux.sh

@@ -1,5 +1,8 @@
 //! Error construction and panic containment for XLA FFI handlers.
 
+// TODO(hardening/stage-6): document the remaining unsafe work; remove this allow.
+#![allow(clippy::undocumented_unsafe_blocks)]
+
 use crate::xla_ffi::{
     error_code, XLA_FFI_Api_Version, XLA_FFI_CallFrame, XLA_FFI_Error, XLA_FFI_Error_Create_Args,
     XLA_FFI_Metadata_Extension, XLA_FFI_TypeId, XLA_FFI_EXTENSION_METADATA,

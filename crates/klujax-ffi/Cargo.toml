@@ -5,6 +5,9 @@ klu-sys = { path = "../klu-sys" }
 crate-type = ["cdylib", "rlib"]
 name = "klujax_ffi"
 
+[lints]
+workspace = true
+
 [package]
 description = "XLA typed-FFI handlers exposing KLU to JAX, statically linking SuiteSparse"
 edition.workspace = true

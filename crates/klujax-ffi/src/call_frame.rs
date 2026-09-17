@@ -3,6 +3,10 @@
 //! The C++ binding DSL does this implicitly; hand-rolling it requires matching
 //! the argument/result ordering used by `jax.ffi.ffi_call`.
 
+// TODO(hardening/stage-1): the `Buffer<'a>` wrappers will document/remove the
+// remaining raw-pointer work; remove this allow then.
+#![allow(clippy::undocumented_unsafe_blocks)]
+
 use crate::error::ErrorInfo;
 use crate::xla_ffi::{
     XLA_FFI_Buffer, XLA_FFI_CallFrame, XLA_FFI_ARG_TYPE_BUFFER, XLA_FFI_RET_TYPE_BUFFER,
