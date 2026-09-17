@@ -1,15 +1,67 @@
-"""KLUJAX Setup."""
+"""KLUJAX Setup.
+
+The primary artifact is now the Rust `klujax-ffi` cdylib. The legacy C++
+extension (`klujax_cpp`) is still built when its vendored dependencies are
+present, so that the pre-migration golden corpus can be generated; it is removed
+in Stage 6 of the Rust migration (see `work.md`).
+"""
 
 import os
-import site
+import shutil
+import subprocess
 import sys
 from glob import glob
+from pathlib import Path
 
 from setuptools import Extension, setup
 from setuptools.command.build_ext import build_ext
 
+ROOT = Path(__file__).resolve().parent
+
+
+def _rust_lib_name() -> str:
+    if sys.platform == "darwin":
+        return "libklujax_ffi.dylib"
+    if sys.platform == "win32":
+        return "klujax_ffi.dll"
+    return "libklujax_ffi.so"
+
+
+class CargoBuildExt(build_ext):
+    """Build the Rust cdylib and copy it into the ``klujax_native`` package."""
+
+    def run(self) -> None:
+        cargo = os.environ.get("CARGO", "cargo")
+        if shutil.which(cargo) is None:
+            msg = (
+                "cargo not found: install Rust (https://rustup.rs) to build "
+                "klujax"
+            )
+            raise RuntimeError(msg)
+        subprocess.run(
+            [cargo, "build", "--release", "-p", "klujax-ffi"],
+            cwd=ROOT,
+            check=True,
+        )
+        built = ROOT / "target" / "release" / _rust_lib_name()
+        if not built.exists():
+            msg = f"expected cargo artifact not found: {built}"
+            raise FileNotFoundError(msg)
+        dest_dir = ROOT / "klujax_native"
+        dest_dir.mkdir(exist_ok=True)
+        shutil.copy2(built, dest_dir / _rust_lib_name())
+        super().run()
+
+
+# Legacy C++ extension ---------------------------------------------------------
+# Only built when the vendored dependencies are present (see `just deps`).
+_deps_present = all(
+    (ROOT / dep).is_dir() for dep in ("suitesparse", "xla", "pybind11")
+)
+_build_cpp = _deps_present and os.environ.get("KLUJAX_BUILD_CPP", "1") == "1"
+
 include_dirs = [
-    os.path.join("xla"),
+    "xla",
     os.path.join("pybind11", "include"),
     os.path.join("suitesparse", "SuiteSparse_config"),
     os.path.join("suitesparse", "AMD", "Include"),
@@ -27,46 +79,37 @@ suitesparse_sources = [
 ]
 
 
-if sys.platform == "linux":  # gcc
-    extension = Extension(
+def _cpp_extension() -> Extension:
+    if sys.platform == "linux":  # gcc
+        return Extension(
+            name="klujax_cpp",
+            sources=["klujax.cpp", *suitesparse_sources],
+            include_dirs=include_dirs,
+            extra_compile_args=["-std=c++17"],
+            extra_link_args=["-static-libgcc", "-static-libstdc++"],
+            language="c++",
+        )
+    if sys.platform == "win32":  # cl
+        return Extension(
+            name="klujax_cpp",
+            sources=["klujax.cpp", *suitesparse_sources],
+            include_dirs=include_dirs,
+            extra_compile_args=["/std:c++17"],
+            language="c++",
+        )
+    return Extension(  # darwin clang
         name="klujax_cpp",
         sources=["klujax.cpp", *suitesparse_sources],
         include_dirs=include_dirs,
-        library_dirs=site.getsitepackages(),
         extra_compile_args=["-std=c++17"],
-        extra_link_args=["-static-libgcc", "-static-libstdc++"],
         language="c++",
     )
-elif sys.platform == "win32":  # cl
-    extension = Extension(
-        name="klujax_cpp",
-        sources=["klujax.cpp", *suitesparse_sources],
-        include_dirs=include_dirs,
-        library_dirs=site.getsitepackages(),
-        extra_compile_args=["/std:c++17"],
-        extra_link_args=[],
-        language="c++",
-    )
-elif sys.platform == "darwin":  # MacOS: clang
-    extension = Extension(
-        name="klujax_cpp",
-        sources=["klujax.cpp", *suitesparse_sources],
-        include_dirs=include_dirs,
-        library_dirs=site.getsitepackages(),
-        extra_compile_args=["-std=c++17"],
-        extra_link_args=[],
-        language="c++",
-    )
-else:
-    msg = f"Platform {sys.platform} not supported."
-    raise RuntimeError(msg)
 
 
-# Custom BuildExt to enable combined build of C and C++ files on MacOs (clang)
-# However, this class also removes some warnings when used on linux (gcc) and
-# Windows (cl) so we use it everywhere.
-class BuildExt(build_ext):
-    def build_extension(self, ext):
+# Custom BuildExt to enable combined build of C and C++ files (clang), on top
+# of the CargoBuildExt behaviour.
+class BuildExt(CargoBuildExt):
+    def build_extension(self, ext: Extension) -> None:
         sources = ext.sources
         c_sources = sorted([s for s in sources if s.endswith("c")])
         cpp_sources = sorted([s for s in sources if s not in c_sources])
@@ -114,6 +157,10 @@ class BuildExt(build_ext):
 
 setup(
     py_modules=["klujax"],
-    ext_modules=[extension],
+    packages=["klujax_native"],
+    package_data={
+        "klujax_native": ["*.so", "*.dylib", "*.dll"],
+    },
+    ext_modules=[_cpp_extension()] if _build_cpp else [],
     cmdclass={"build_ext": BuildExt},
 )

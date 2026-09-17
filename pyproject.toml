@@ -107,3 +107,8 @@ select = ["ALL"]
   "README.md",
   "MANIFEST.in"
 ]
+"klujax_native" = [
+  "*.so",
+  "*.dylib",
+  "*.dll"
+]

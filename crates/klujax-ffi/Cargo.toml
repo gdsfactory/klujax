@@ -1,0 +1,13 @@
+[package]
+name = "klujax-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "XLA typed-FFI handlers exposing the Rust KLU solver to JAX"
+
+[lib]
+name = "klujax_ffi"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+klu.workspace = true

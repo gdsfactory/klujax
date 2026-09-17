@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["crates/klu", "crates/klujax-ffi"]
+
+[workspace.package]
+version = "0.5.2"
+edition = "2021"
+license = "LGPL-2.1"
+
+[workspace.dependencies]
+klu = { path = "crates/klu" }

@@ -1,4 +1,9 @@
 include tests.py
+include Cargo.toml
+include Cargo.lock
+recursive-include crates *.rs *.toml *.h
+include klujax_native/__init__.py
+include scripts/*.py
 include klujax.cpp
 include pybind11/include/pybind11/*.h
 include pybind11/include/pybind11/detail/*.h

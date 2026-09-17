@@ -1,6 +1,11 @@
 # files
 *.c
 *.cover
+# rust
+/target
+crates/*/target
+klujax_native/*.dylib
+klujax_native/*.dll
 *.egg
 *.egg-info
 *.ipynb

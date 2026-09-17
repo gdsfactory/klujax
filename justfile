@@ -4,6 +4,30 @@
 list:
     just --list
 
+# Build the Rust cdylib (release)
+rust-build:
+    cargo build --release -p klujax-ffi
+
+# Run the Rust test suite
+rust-test:
+    cargo test --workspace
+
+# Smoke-test the Rust cdylib ABI surface with ctypes
+rust-smoke: rust-build
+    python scripts/ffi_smoke.py
+
+# Format the Rust code
+rust-fmt:
+    cargo fmt --all
+
+# Lint the Rust code
+rust-clippy:
+    cargo clippy --workspace --all-targets -- -D warnings
+
+# Remove Rust build artifacts
+rust-clean:
+    cargo clean
+
 # Set up development environment (clones dependencies first)
 dev: maybe-deps bver
     uv venv --python 3.13 --clear
@@ -70,11 +94,13 @@ pybind11:
 # Clean build artifacts
 clean:
     rm -rf .venv
+    cargo clean
     find . -name "dist" | xargs rm -rf
     find . -name "build" | xargs rm -rf
     find . -name "builds" | xargs rm -rf
     find . -name "__pycache__" | xargs rm -rf
     find . -name "*.so" | xargs rm -rf
+    find . -name "*.dylib" | xargs rm -rf
     find . -name "*.egg-info" | xargs rm -rf
     find . -name ".ipynb_checkpoints" | xargs rm -rf
     find . -name ".pytest_cache" | xargs rm -rf
