@@ -371,7 +371,7 @@ Purpose: reproduce the entire `klujax.cpp` surface from Rust, calling the
 existing SuiteSparse C KLU behind a Rust-owned safe-ish API.
 
 ### 2.1 Vendor the C KLU behind a Rust crate
-Status: `klu-sys` landed and verified; the `klu` wrapper + handlers are next.
+Status: `klu-sys` + the C-backed engine landed and verified; frame handlers next.
 - [x] Keep the existing `suitesparse/` checkout (fetched by `just deps`).
 - [x] Add `crates/klu-sys` (temporary, M1-only) using the `cc` crate to compile
       `SuiteSparse_config`, `AMD`, `COLAMD`, `BTF`, `KLU` C sources. Not a
@@ -379,14 +379,15 @@ Status: `klu-sys` landed and verified; the `klu` wrapper + handlers are next.
       or `--workspace`.
       - [x] Expose the C `klu_*` + `klu_z_*` symbols (plus mirrored
             `klu_common`), covered by a direct-C `solve_2x2_diagonal_f64` test.
-- [ ] Wrap in `crates/klu` with a Rust API identical to the eventual pure-Rust
-      one:
-      - [ ] `Symbolic`, `Numeric` opaque handle types (raw pointer newtype).
-      - [ ] `analyze(n_col, ai, aj) -> Result<Symbolic>`.
-      - [ ] `factor(ap, ai, ax, &Symbolic) -> Result<Numeric>`.
-      - [ ] `refactor(...)`, `solve(...)`, `tsolve(...)`, `free_*`.
-      - [ ] Real (f64) and complex (c128) via `KluTraits`-style generic.
-- [ ] Add differential smoke test vs. a direct C call.
+- [x] C-backed engine (`klujax-ffi/src/engine.rs`, feature `c-backend`) with
+      `coo_to_csc`, `analyze_raw`, `factor_raw`, `refactor_raw`,
+      `solve_raw`, `solve_with_symbol_raw`, `tsolve_with_symbol_raw`,
+      `solve_with_numeric_raw`, `dot_raw`, `free_*` for f64 **and** c128.
+      Deviation: lives in `klujax-ffi` (not `crates/klu`) so that `klu` stays
+      pure-Rust for Stage 5; the handler layer is unaffected.
+      Verified by 9 Rust unit tests (real + complex, direct + split solves).
+- [x] Differential smoke test vs. a direct C call (`klu-sys` test) and
+      engine-level tests.
 
 ### 2.2 Call-frame decode + error + panic guard
 Decision: hand-roll decode in Rust, **no C++** (see §1 and §3.5).
@@ -653,6 +654,7 @@ uv run pytest tests_parity.py
 
 | Date (UTC) | Change |
 |---|---|
+| 2026-03-21 | Stage 2.1 (complete modulo handlers): added C-backed `engine.rs` (analyze/factor/refactor/solve/tsolve/dot/free, f64+c128) feature-gated behind `c-backend`; 9 Rust tests pass. |
 | 2026-03-21 | Stage 2.1 (partial): added `crates/klu-sys` compiling the vendored SuiteSparse C KLU via `cc`; direct-C solve test passes. |
 | 2026-03-21 | Stage 0.5 (complete): added `tests_characterization/` (shapes, dtypes, coalesce, scipy oracles + structural stress, edges/errors, AD/vmap, frozen golden corpus), `docs/test-matrix.md`, pytest-cov + 79% baseline. 130 tests pass. |
 | 2026-03-21 | Stage 0 (complete): pinned `c_api.h` from jaxlib 0.9.2; built the C++ extension against jaxlib headers; `tests.py` 79 passed; benchmark → `benchmarks/baseline.json`. Fixed Linux-only RSS probe in `tests.py` to be macOS/Windows portable. |

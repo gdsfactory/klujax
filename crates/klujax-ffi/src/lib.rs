@@ -6,6 +6,8 @@
 
 pub mod call_frame;
 pub mod capi;
+#[cfg(feature = "c-backend")]
+pub mod engine;
 pub mod error;
 pub mod handlers;
 pub mod xla_ffi;

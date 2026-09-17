@@ -34,6 +34,7 @@ name = "klujax-ffi"
 version = "0.5.2"
 dependencies = [
  "klu",
+ "klu-sys",
 ]
 
 [[package]]
