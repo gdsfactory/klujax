@@ -75,7 +75,7 @@ def main() -> int:
     solve_with_symbol_jit = jax.jit(klujax.solve_with_symbol)
 
     results = {
-        "implementation": "suitesparse-c++",
+        "implementation": "rust (statically linked suitesparse)",
         "klujax_version": klujax.__version__,
         "platform": platform.platform(),
         "python": sys.version.split()[0],
