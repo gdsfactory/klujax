@@ -685,12 +685,21 @@ def test_deprecated_free_numeric():
 
 
 def _get_rss_kb():
-    """Return current RSS in kilobytes (Linux-only)."""
-    with Path(f"/proc/{os.getpid()}/status").open() as f:
-        for line in f:
-            if line.startswith("VmRSS:"):
-                return int(line.split()[1])
-    return 0
+    """Return current RSS in kilobytes (Linux, macOS; 0 elsewhere)."""
+    try:
+        with Path(f"/proc/{os.getpid()}/status").open() as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1])
+    except FileNotFoundError:
+        pass
+    try:
+        import resource
+    except ImportError:  # e.g. Windows
+        return 0
+    usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    # Linux reports KiB, macOS reports bytes.
+    return usage // 1024 if sys.platform == "darwin" else usage
 
 
 def test_no_leak_symbolic():

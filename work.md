@@ -1,7 +1,7 @@
 # klujax → Rust migration plan (non-PyO3)
 
-Status: in progress — Stage 0 largely complete, Stage 1 complete, Stage 0.5
-next. See the status log at the end of this file.
+Status: in progress — Stage 0 complete, Stage 1 complete, Stage 0.5 next.
+See the status log at the end of this file.
 Owner: Floris
 Target: replace `klujax.cpp` (pybind11 + SuiteSparse) with a pure-Rust
 implementation exposed to Python via a `cdylib` + `ctypes` + `jax.ffi.pycapsule`,
@@ -198,9 +198,10 @@ the vendored C++ deps).
 - [x] Confirm Python loader: `ctypes.CDLL` + `jax.ffi.pycapsule`.
 - [x] Confirm handler naming: exported Rust symbols match XLA target names
       (`solve_f64`, `analyze`, …); verified by `scripts/ffi_smoke.py`.
-- [ ] Record baseline: on current `main`, run `just test` and a benchmark on a
-      representative suite; save results to `benchmarks/rust-baseline.json`.
-      **Blocked** on `just deps` (vendored `suitesparse`/`xla`/`pybind11`).
+- [x] Record baseline: on current `main`, run `just test` and a benchmark on a
+      representative suite; save results. `tests.py` → **79 passed** (after a
+      macOS RSS-probe fix, see Stage 0.5), benchmark → `benchmarks/baseline.json`
+      (`implementation: suitesparse-c++`).
 - [x] Poll `jaxlib`'s `c_api.h`; copy the pinned header into
       `crates/klujax-ffi/c_api/c_api.h`
       (sha256 `85fc385c…a539`, 788 lines).
@@ -210,8 +211,9 @@ the vendored C++ deps).
 - [x] Create branch. Using the existing `rs` branch (per goal).
 - [x] Add `.gitignore` entries for `/target`, `crates/*/target`, copied libs.
 
-Exit criteria: pinned header committed ✓; tests/benchmark baseline still
-pending the C++ deps.
+Exit criteria: baseline tests + benchmark recorded ✓; pinned header committed ✓.
+Note: the C++ extension was built against the jaxlib-bundled XLA FFI headers
+(`xla` symlinked to `jax.ffi.include_dir()`), avoiding the large XLA clone.
 
 ---
 
@@ -646,5 +648,5 @@ uv run pytest tests_parity.py
 
 | Date (UTC) | Change |
 |---|---|
-| 2026-03-21 | Stage 0 (partial): pinned `c_api.h` from jaxlib 0.9.2; decisions locked. |
+| 2026-03-21 | Stage 0 (complete): pinned `c_api.h` from jaxlib 0.9.2; built the C++ extension against jaxlib headers; `tests.py` 79 passed; benchmark → `benchmarks/baseline.json`. Fixed Linux-only RSS probe in `tests.py` to be macOS/Windows portable. |
 | 2026-03-21 | Stage 1 (complete): Rust workspace (`klu`, `klujax-ffi`), hand-written XLA C ABI + drift tests, decode/error/guard, 21 handler stubs, C-ABI shims, `CargoBuildExt` + `klujax_native`, just recipes, ctypes smoke test. 5 Rust tests pass; clippy/fmt clean; editable install loads cdylib. |

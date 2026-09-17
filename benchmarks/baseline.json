@@ -1,0 +1,19 @@
+{
+  "implementation": "suitesparse-c++",
+  "klujax_version": "0.5.1",
+  "platform": "macOS-26.7-arm64-arm-64bit",
+  "python": "3.12.14",
+  "jax": "0.9.2",
+  "shape": {
+    "n_col": 200,
+    "n_nz": 2145,
+    "n_rhs": 8
+  },
+  "repeats": 20,
+  "ms": {
+    "analyze": 0.1390249999531079,
+    "solve_jit": 0.4803541502042208,
+    "solve_with_symbol_jit": 0.46491665016219486,
+    "factor": 0.415610400159494
+  }
+}

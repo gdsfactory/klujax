@@ -49,7 +49,8 @@ pip-log.txt
 # folders
 suitesparse/
 pybind11/
-xla/
+/xla
+/xla/
 .eggs/
 .hypothesis/
 .ipynb_checkpoints/
