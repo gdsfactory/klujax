@@ -504,8 +504,8 @@ FFI seam wrapping the C KLU is at feature, API and performance parity.
       (base 0.480), solve_with_symbol 0.476 ms (base 0.465), factor 0.459 ms
       (base 0.416) — within ~10%/noise, no >5% regression except `factor`.
 - [x] Cross-platform smoke: **macOS (arm64)** native and **Linux (aarch64,
-      GCC 12.2)** via Docker (`just verify-linux`) build the cdylib and solve;
-      **Windows** pending CI.
+      GCC 12.2)** via Docker — `just verify-linux-tests` builds from source and
+      runs the **full 130-test suite** green; **Windows** pending CI.
 - [ ] Tag milestone `rust-ffi-parity` — deferred to the release step.
 
 Exit criteria: feature/API parity, tests green, performance parity — met.
@@ -544,8 +544,8 @@ Remaining: cross-platform hardening (CI matrix in Stage 6).
       legacy root `suitesparse/` hidden still succeeds (compiles from
       `vendor/SuiteSparse`).
 - [x] Cross-platform `cc` build: **Linux (aarch64, GCC 12.2)** verified via
-      Docker (`just verify-linux`, static-link-check green, 21 handlers);
-      **Windows (MSVC)** pending CI.
+      Docker (`just verify-linux` static-link green + 21 handlers;
+      `just verify-linux-tests` 130 tests green); **Windows (MSVC)** pending CI.
 - [x] Selective source list implemented: skip the 64-bit-index variants
       (`amd_l*`, `btf_l_*`, `colamd_l`, `klu_l_*`, `klu_zl_*`) in `build.rs`;
       the FFI only uses the int32 (`klu_*`/`klu_z_*`) entry points. 130 pytest
@@ -629,6 +629,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 just test                 # uv run pytest (tests.py + characterization + golden)
 python scripts/ffi_smoke.py
+just verify-linux          # Linux build + static-link check (Docker)
+just verify-linux-tests    # Linux build-from-source + full pytest (Docker)
 # static-link check (macOS):
 otool -L target/release/libklujax_ffi.dylib | grep -i suitesparse && echo LEAK
 ```
@@ -678,6 +680,7 @@ otool -L target/release/libklujax_ffi.dylib | grep -i suitesparse && echo LEAK
 
 | Date (UTC) | Change |
 |---|---|
+| 2026-03-21 | Stage 4/5 (Linux end-to-end): `just verify-linux-tests` builds from source in a `rust:1.85-bookworm` container (aarch64) and runs the **full 130-test suite green**. This exposed and fixed a real bug: `setup.py` ignored `CARGO_TARGET_DIR` and looked for the cdylib in the wrong directory. |
 | 2026-03-21 | Stage 5/4 (Linux verified): `just verify-linux` builds `klujax-ffi` in a `rust:1.85-bookworm` container (aarch64, GCC 12.2); `ldd` shows no dynamic SuiteSparse, 21 handlers exported. Added `scripts/verify_linux.sh`. Windows still pending. |
 | 2026-03-21 | Stage 6 (local gates green): `pre-commit run --all-files` passes (cargo fmt/clippy, ruff 0.15.7, ty, pretty-format-toml); `mkdocs build --strict` passes (added the test matrix to the nav). CI run + PyPI release remain (external). |
 | 2026-03-21 | Stage 6 (wheel install verified): fresh-venv install of the built wheel loads the bundled cdylib from site-packages and solves correctly. `CargoBuildExt` now also copies the cdylib into the wheel build dir so the sdist `exclude` does not strip it. |
