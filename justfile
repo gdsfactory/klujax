@@ -24,6 +24,10 @@ rust-smoke: rust-build
 static-link-check: rust-build
     python scripts/check_static_link.py
 
+# Cross-platform verification: build + static-link check on Linux via Docker
+verify-linux:
+    bash scripts/verify_linux.sh
+
 # Format the Rust code
 rust-fmt:
     cargo fmt --all
