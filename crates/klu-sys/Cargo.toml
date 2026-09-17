@@ -1,0 +1,9 @@
+[package]
+name = "klu-sys"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Raw FFI bindings to the SuiteSparse C KLU library (M1 transitional)"
+
+[build-dependencies]
+cc = "1"

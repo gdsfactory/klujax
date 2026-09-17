@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["crates/klu", "crates/klujax-ffi"]
+members = ["crates/klu", "crates/klu-sys", "crates/klujax-ffi"]
+# `klu-sys` needs the vendored SuiteSparse sources (`just deps`), so it is not a
+# default member. Build/test it explicitly or with `--workspace`.
+default-members = ["crates/klu", "crates/klujax-ffi"]
 
 [workspace.package]
 version = "0.5.2"

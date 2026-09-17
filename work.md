@@ -371,10 +371,14 @@ Purpose: reproduce the entire `klujax.cpp` surface from Rust, calling the
 existing SuiteSparse C KLU behind a Rust-owned safe-ish API.
 
 ### 2.1 Vendor the C KLU behind a Rust crate
-- [ ] Keep the existing `suitesparse/` checkout (or vendor a tarball).
-- [ ] Add `crates/klu-sys` (temporary, M1-only) using the `cc` crate to compile
-      `SuiteSparse_config`, `AMD`, `COLAMD`, `BTF`, `KLU` C sources.
-      - [ ] Generate/expose the C `klu_*` + `klu_z_*` symbols.
+Status: `klu-sys` landed and verified; the `klu` wrapper + handlers are next.
+- [x] Keep the existing `suitesparse/` checkout (fetched by `just deps`).
+- [x] Add `crates/klu-sys` (temporary, M1-only) using the `cc` crate to compile
+      `SuiteSparse_config`, `AMD`, `COLAMD`, `BTF`, `KLU` C sources. Not a
+      default workspace member (needs `suitesparse/`); build with `-p klu-sys`
+      or `--workspace`.
+      - [x] Expose the C `klu_*` + `klu_z_*` symbols (plus mirrored
+            `klu_common`), covered by a direct-C `solve_2x2_diagonal_f64` test.
 - [ ] Wrap in `crates/klu` with a Rust API identical to the eventual pure-Rust
       one:
       - [ ] `Symbolic`, `Numeric` opaque handle types (raw pointer newtype).
@@ -649,6 +653,7 @@ uv run pytest tests_parity.py
 
 | Date (UTC) | Change |
 |---|---|
+| 2026-03-21 | Stage 2.1 (partial): added `crates/klu-sys` compiling the vendored SuiteSparse C KLU via `cc`; direct-C solve test passes. |
 | 2026-03-21 | Stage 0.5 (complete): added `tests_characterization/` (shapes, dtypes, coalesce, scipy oracles + structural stress, edges/errors, AD/vmap, frozen golden corpus), `docs/test-matrix.md`, pytest-cov + 79% baseline. 130 tests pass. |
 | 2026-03-21 | Stage 0 (complete): pinned `c_api.h` from jaxlib 0.9.2; built the C++ extension against jaxlib headers; `tests.py` 79 passed; benchmark → `benchmarks/baseline.json`. Fixed Linux-only RSS probe in `tests.py` to be macOS/Windows portable. |
 | 2026-03-21 | Stage 1 (complete): Rust workspace (`klu`, `klujax-ffi`), hand-written XLA C ABI + drift tests, decode/error/guard, 21 handler stubs, C-ABI shims, `CargoBuildExt` + `klujax_native`, just recipes, ctypes smoke test. 5 Rust tests pass; clippy/fmt clean; editable install loads cdylib. |
