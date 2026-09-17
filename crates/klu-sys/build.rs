@@ -22,10 +22,21 @@ const INCLUDE_DIRS: &[&str] = &[
     "KLU/Include",
 ];
 
-/// Directories whose `*.c` files are compiled into one static archive. The
-/// int64 (`*_l_*` / `*_zl_*`) KLU variants are compiled too; they are small and
-/// keep the archive self-contained.
+/// Directories whose `*.c` files are compiled into one static archive.
+///
+/// The 64-bit-index variants (`amd_l*`, `btf_l_*`, `colamd_l`, `klu_l_*`,
+/// `klu_zl_*`) are **skipped**: the FFI layer only calls the `int32` (`klu_*` /
+/// `klu_z_*`) entry points, so building them would only slow the build and
+/// bloat the archive. See `is_int64_variant`.
 const SOURCE_DIRS: &[&str] = &["AMD/Source", "COLAMD/Source", "BTF/Source", "KLU/Source"];
+
+/// SuiteSparse names its 64-bit-index variants with an `_l` / `_zl` infix
+/// (e.g. `amd_l1.c`, `btf_l_order.c`, `colamd_l.c`, `klu_l_factor.c`,
+/// `klu_zl_factor.c`). The `int32` variants (`amd_2.c`, `klu_z_factor.c`, …)
+/// must not match.
+fn is_int64_variant(stem: &str) -> bool {
+    stem.contains("_l") || stem.contains("_zl")
+}
 
 fn locate_suitesparse(manifest: PathBuf) -> PathBuf {
     if let Ok(dir) = env::var("KLUJAX_SUITESPARSE_DIR") {
@@ -84,6 +95,10 @@ fn main() {
         {
             let path = entry.unwrap().path();
             if path.extension().is_some_and(|e| e == "c") {
+                let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                if is_int64_variant(stem) {
+                    continue;
+                }
                 build.file(path);
             }
         }

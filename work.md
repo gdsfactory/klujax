@@ -542,8 +542,10 @@ items are cross-platform hardening, selective sources, and docs.
       legacy root `suitesparse/` hidden still succeeds (compiles from
       `vendor/SuiteSparse`).
 - [ ] Cross-platform `cc` build: Linux (gcc/clang), Windows (MSVC).
-- [ ] Decide whether to compile a *selective* source list (smaller/faster build)
-      instead of every `*.c` in AMD/COLAMD/BTF/KLU.
+- [x] Selective source list implemented: skip the 64-bit-index variants
+      (`amd_l*`, `btf_l_*`, `colamd_l`, `klu_l_*`, `klu_zl_*`) in `build.rs`;
+      the FFI only uses the int32 (`klu_*`/`klu_z_*`) entry points. 130 pytest
+      + 9 `klu-sys` tests still pass; static-link check still green.
 - [ ] Remove the legacy repo-root `suitesparse/` fallback, or document it as a
       dev convenience.
 - [ ] Document submodule init + static linking in README/AGENTS (Stage 6).
@@ -627,7 +629,6 @@ otool -L target/release/libklujax_ffi.dylib | grep -i suitesparse && echo LEAK
 - Stage 6 (remove C++, CI, release): days.
 
 ### Open questions
-- [ ] Selective vs. full source list for `klu-sys` (build time / artifact size)?
 - [ ] Policy for bumping the pinned SuiteSparse submodule version?
 - [ ] Keep the repo-root `suitesparse/` fallback or drop it in favour of the
       submodule only?
@@ -655,6 +656,7 @@ otool -L target/release/libklujax_ffi.dylib | grep -i suitesparse && echo LEAK
 
 | Date (UTC) | Change |
 |---|---|
+| 2026-03-21 | Stage 5 (selective sources): `klu-sys/build.rs` now skips the int64 (`_l`/`_zl`) variants; build/tests/static-link still green. |
 | 2026-03-21 | Stage 5 (static link verified): `otool -L` shows only `libSystem`; added `scripts/check_static_link.py` + `just static-link-check`; confirmed the build compiles from `vendor/SuiteSparse` with the legacy root checkout hidden. 130 pytest + 9 klu-sys tests pass. |
 | 2026-03-21 | **Re-scope**: dropped the pure-Rust KLU port; KLU stays SuiteSparse C, built and statically linked by a `klu-sys` crate (eigenlight/UMFPACK pattern). Removed the `crates/klu` scaffolding. Added `vendor/SuiteSparse` submodule (v7.5.0) and rewrote `klu-sys/build.rs` for static linking. |
 | 2026-03-21 | Stage 3+4 (complete): switched `klujax.py` to `klujax_native` (ctypes + `jax.ffi.pycapsule`) with pure-Python handles; implemented the XLA FFI **metadata probe** response required at registration. All 130 tests pass against the Rust backend; benchmark parity confirmed. |
