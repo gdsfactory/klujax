@@ -28,6 +28,10 @@ static-link-check: rust-build
 verify-linux:
     bash scripts/verify_linux.sh
 
+# Full Linux verification: build from source + run pytest in Docker
+verify-linux-tests:
+    bash scripts/verify_linux_tests.sh
+
 # Format the Rust code
 rust-fmt:
     cargo fmt --all

@@ -26,6 +26,20 @@ def _rust_lib_name() -> str:
     return "libklujax_ffi.so"
 
 
+def _cargo_target_dir() -> Path:
+    """Resolve the cargo target directory, honoring ``CARGO_TARGET_DIR``."""
+    env = os.environ.get("CARGO_TARGET_DIR")
+    target = Path(env) if env else ROOT / "target"
+    if not target.is_absolute():
+        target = ROOT / target
+    return target
+
+
+def _cargo_artifact() -> Path:
+    """Path to the built cdylib (honoring ``CARGO_TARGET_DIR``)."""
+    return _cargo_target_dir() / "release" / _rust_lib_name()
+
+
 class CargoBuildExt(build_ext):
     """Build the Rust cdylib and copy it into the ``klujax_native`` package."""
 
@@ -39,7 +53,7 @@ class CargoBuildExt(build_ext):
             cwd=ROOT,
             check=True,
         )
-        built = ROOT / "target" / "release" / _rust_lib_name()
+        built = _cargo_artifact()
         if not built.exists():
             msg = f"expected cargo artifact not found: {built}"
             raise FileNotFoundError(msg)
