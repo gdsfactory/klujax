@@ -13,7 +13,7 @@ pub mod common;
 pub mod error;
 pub mod handle;
 
-pub use common::KluCommon;
+pub use common::{KluCommon, Ordering, Scaling};
 pub use error::{KluError, KluStatus};
 pub use handle::{Numeric, Symbolic};
 

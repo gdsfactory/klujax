@@ -505,11 +505,17 @@ Port bottom-up. Each sub-stage is differential-tested against the C oracle
 Reference source (pinned v7.5.0): `suitesparse/{SuiteSparse_config,AMD,COLAMD,BTF,KLU}`.
 
 ### 5.1 Core types & config
-- [ ] `common.rs`: `KluCommon` (tol, memgrow, initmem, status, ordering, scale,
-      etc.), status codes, `klu_defaults`.
-- [ ] `config.rs`: memory allocation wrappers, `SuiteSparse_config` defaults
-      (only the pieces KLU uses; drop timer/printf unless needed).
-- [ ] Error/status mapping to `XLA_FFI_Error_Code` and to `i32` for C API shims.
+- [x] `common.rs`: `KluCommon` (tol, memgrow, initmem_amd, initmem, maxwork,
+      btf, ordering, scale, halt_if_singular, status, structural_rank,
+      numerical_rank, singular_col, noffdiag), `Ordering`/`Scaling` enums with
+      C-compatible discriminants, and `KluCommon::defaults()`; tested against
+      the SuiteSparse defaults.
+- [x] `config.rs` — **not ported by design**: the Rust allocator replaces the
+      `SuiteSparse_config` malloc/free hooks. Documented here instead.
+- [x] Error/status mapping: `KluError::status() -> KluStatus` and the
+      `KluStatus` code set (`crates/klu/src/error.rs`). Mapping to
+      `XLA_FFI_Error_Code` happens in `klujax-ffi`.
+- [ ] Port the actual orderings / BTF / kernels (5.2–5.8).
 
 ### 5.2 Ordering — AMD
 - [ ] Port `AMD/Source/*` (amd_1, amd_2, amd_aat, amd_postorder, amd_valid,
@@ -659,6 +665,7 @@ uv run pytest tests_parity.py
 
 | Date (UTC) | Change |
 |---|---|
+| 2026-03-21 | Stage 5.1 (partial): expanded pure-Rust `klu::common` (KluCommon fields, Ordering/Scaling with C discriminants, defaults) + tests; `config.rs` intentionally not ported. |
 | 2026-03-21 | Stage 3+4 (complete): switched `klujax.py` to `klujax_native` (ctypes + `jax.ffi.pycapsule`) with pure-Python handles; fixed COO→CSC `bk` use in `solve_raw`; implemented the XLA FFI **metadata probe** response required at registration. All 130 tests pass against the Rust backend; benchmark parity confirmed. |
 | 2026-03-21 | Stage 2.1 (complete modulo handlers): added C-backed `engine.rs` (analyze/factor/refactor/solve/tsolve/dot/free, f64+c128) feature-gated behind `c-backend`; 9 Rust tests pass. |
 | 2026-03-21 | Stage 2.1 (partial): added `crates/klu-sys` compiling the vendored SuiteSparse C KLU via `cc`; direct-C solve test passes. |
