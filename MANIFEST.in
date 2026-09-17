@@ -5,3 +5,15 @@ recursive-include crates *.rs *.toml *.h
 include klujax_native/__init__.py
 include scripts/*.py
 recursive-include tests_characterization *.py *.npz
+# Never ship a prebuilt native library in the sdist; it is rebuilt from source.
+exclude klujax_native/*.so
+exclude klujax_native/*.dylib
+exclude klujax_native/*.dll
+# Vendor the SuiteSparse sources needed by klu-sys so an sdist install is
+# self-contained (no submodule init required).
+recursive-include vendor/SuiteSparse/SuiteSparse_config *
+recursive-include vendor/SuiteSparse/AMD *
+recursive-include vendor/SuiteSparse/COLAMD *
+recursive-include vendor/SuiteSparse/BTF *
+recursive-include vendor/SuiteSparse/KLU *
+include vendor/SuiteSparse/LICENSE.txt

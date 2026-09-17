@@ -13,6 +13,7 @@ from pathlib import Path
 
 from setuptools import setup
 from setuptools.command.build_ext import build_ext
+from setuptools.dist import Distribution
 
 ROOT = Path(__file__).resolve().parent
 
@@ -48,6 +49,18 @@ class CargoBuildExt(build_ext):
         super().run()
 
 
+class BinaryDistribution(Distribution):
+    """Mark the distribution as platform-specific.
+
+    The wheel bundles a native cdylib, so it must not be tagged
+    ``py3-none-any`` (otherwise it would be installed on incompatible
+    platforms).
+    """
+
+    def has_ext_modules(self) -> bool:  # noqa: D102
+        return True
+
+
 setup(
     py_modules=["klujax"],
     packages=["klujax_native"],
@@ -55,4 +68,5 @@ setup(
         "klujax_native": ["*.so", "*.dylib", "*.dll"],
     },
     cmdclass={"build_ext": CargoBuildExt},
+    distclass=BinaryDistribution,
 )
