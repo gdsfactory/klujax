@@ -7,12 +7,12 @@ coalesced matrix) and are covered via `coalesce` in `test_coalesce.py`.
 
 from __future__ import annotations
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
-import jax.numpy as jnp
 import klujax
-from tests_characterization.helpers import dense, rand_coo, rand_rhs
+from tests_characterization.helpers import dense, rand_coo
 
 
 def test_singular_raises_runtime_error():

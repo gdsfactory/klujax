@@ -57,9 +57,7 @@ def dependencies(lib: Path) -> list[str]:
     # First line is the library itself; also drop the self-referential install
     # name (which contains our own `libklujax_ffi`).
     self_name = lib.name
-    return [
-        line for line in out.splitlines()[1:] if self_name not in line
-    ]
+    return [line for line in out.splitlines()[1:] if self_name not in line]
 
 
 def main() -> int:

@@ -68,7 +68,7 @@ class BinaryDistribution(Distribution):
     platforms).
     """
 
-    def has_ext_modules(self) -> bool:  # noqa: D102
+    def has_ext_modules(self) -> bool:
         return True
 
 

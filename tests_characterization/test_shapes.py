@@ -10,7 +10,6 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import jax.numpy as jnp
 import klujax
 from tests_characterization.helpers import DTYPES, dense, rand_coo, rand_rhs
 

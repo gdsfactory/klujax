@@ -7,10 +7,10 @@ contract. See `work.md` Stage 0.5.
 
 from __future__ import annotations
 
+import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
-import jax.numpy as jnp
 import klujax
 
 DTYPES = [np.float64, np.complex128]

@@ -22,7 +22,7 @@ docs = [
 
 [project]
 authors = [
-  {name = "Floris Laporte", email = "floris.laporte@gmail.com"}
+  { name = "Floris Laporte", email = "floris.laporte@gmail.com" }
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -65,8 +65,8 @@ action = "commit-tag-and-push"
 
 [tool.pytest.ini_options]
 addopts = '--tb=short'
-testpaths = ["tests.py", "tests_characterization"]
 pythonpath = ["."]
+testpaths = ["tests.py", "tests_characterization"]
 
 [tool.ruff]
 fix = true
@@ -100,8 +100,45 @@ select = ["ALL"]
 [tool.ruff.lint.per-file-ignores]
 ".github/run_tests.py" = ["INP", "PTH", "T201", "S603", "S607"]
 "benchmark.py" = ["INP001", "T201"]
-"setup.py" = ["PTH", "ANN", "D101", "D102"]
+"klujax_native/__init__.py" = [
+  "BLE001",
+  "D",
+  "PLC0415",
+  "PYI034",
+  "S110",
+  "SIM105"
+]
+"scripts/*.py" = [
+  "D",
+  "INP001",
+  "ANN",
+  "E501",
+  "EXE001",
+  "PERF401",
+  "PLR2004",
+  "S603",
+  "S607",
+  "T201"
+]
+"setup.py" = ["PTH", "ANN", "D101", "D102", "S603"]
 "tests.py" = ["D", "INP001", "ANN", "T201", "E501", "N806", "SLF001"]
+"tests_characterization/*.py" = [
+  "CPY001",
+  "D",
+  "INP001",
+  "ANN",
+  "T201",
+  "E501",
+  "N806",
+  "PERF401",
+  "PLR0917",
+  "PLR2004",
+  "PT006",
+  "PT011",
+  "PT018",
+  "RUF043",
+  "RUF059"
+]
 
 [tool.setuptools.package-data]
 "*" = [

@@ -1,12 +1,12 @@
 [workspace]
-resolver = "2"
-members = ["crates/klu-sys", "crates/klujax-ffi"]
 # `klu-sys` compiles the SuiteSparse submodule at `crates/klu-sys/SuiteSparse`
 # (or a checkout pointed at by `KLUJAX_SUITESPARSE_DIR`). It is a normal member,
 # but building `klujax-ffi` alone pulls it in as a dependency.
 default-members = ["crates/klujax-ffi"]
+members = ["crates/klu-sys", "crates/klujax-ffi"]
+resolver = "2"
 
 [workspace.package]
-version = "0.5.2"
 edition = "2021"
 license = "LGPL-2.1"
+version = "0.5.2"

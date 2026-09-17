@@ -1,13 +1,13 @@
-[package]
-name = "klujax-ffi"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-description = "XLA typed-FFI handlers exposing KLU to JAX, statically linking SuiteSparse"
-
-[lib]
-name = "klujax_ffi"
-crate-type = ["cdylib", "rlib"]
-
 [dependencies]
 klu-sys = { path = "../klu-sys" }
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "klujax_ffi"
+
+[package]
+description = "XLA typed-FFI handlers exposing KLU to JAX, statically linking SuiteSparse"
+edition.workspace = true
+license.workspace = true
+name = "klujax-ffi"
+version.workspace = true

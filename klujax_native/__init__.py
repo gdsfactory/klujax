@@ -34,8 +34,7 @@ def lib_path() -> Path:
         if candidate.exists():
             return candidate
     msg = (
-        f"could not find {_NAME} in {here} or target/; "
-        "build it with `just rust-build`"
+        f"could not find {_NAME} in {here} or target/; build it with `just rust-build`"
     )
     raise FileNotFoundError(msg)
 
@@ -104,7 +103,7 @@ del _target
 class KLUSymbolic:
     """Symbolic analysis handle (owns a ``klu_symbolic*`` stored as ``u64``)."""
 
-    __slots__ = ("_raw", "_closed")
+    __slots__ = ("_closed", "_raw")
 
     def __init__(self, raw: int) -> None:
         self._raw = int(raw)
@@ -132,16 +131,16 @@ class KLUSymbolic:
     def __del__(self) -> None:
         try:
             self.close()
-        except Exception:  # noqa: BLE001 - interpreter shutdown
+        except Exception:
             pass
 
 
 class KLUNumeric:
     """Numeric factorization handle (owns one ``klu_numeric*`` per batch)."""
 
-    __slots__ = ("_handles", "_closed")
+    __slots__ = ("_closed", "_handles")
 
-    def __init__(self, handles) -> None:  # noqa: ANN001
+    def __init__(self, handles) -> None:
         self._handles = [int(h) for h in handles]
         self._closed = False
 
@@ -167,5 +166,5 @@ class KLUNumeric:
     def __del__(self) -> None:
         try:
             self.close()
-        except Exception:  # noqa: BLE001 - interpreter shutdown
+        except Exception:
             pass

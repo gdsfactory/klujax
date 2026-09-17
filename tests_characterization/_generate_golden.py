@@ -12,9 +12,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import jax.numpy as jnp
 import numpy as np
 
-import jax.numpy as jnp
 import klujax
 from tests_characterization.helpers import rand_coo, rand_rhs
 
@@ -41,9 +41,9 @@ def _block_upper_triangular(dtype, blocks=3, size=5, seed=0):
     A = np.zeros((n, n), dtype=dtype)
     for i in range(blocks):
         si = i * size
-        A[si : si + size, si : si + size] = rng.standard_normal(
-            (size, size)
-        ).astype(dtype) + 10 * np.eye(size, dtype=dtype)
+        A[si : si + size, si : si + size] = rng.standard_normal((size, size)).astype(
+            dtype
+        ) + 10 * np.eye(size, dtype=dtype)
         for j in range(i + 1, blocks):
             sj = j * size
             A[si : si + size, sj : sj + size] = 0.3 * rng.standard_normal(
@@ -105,7 +105,9 @@ def main() -> None:
         inputs[f"{name}_n_col"] = np.asarray(n_col)
         inputs[f"{name}_op"] = np.asarray(op)
         outputs[f"{name}_x"] = np.asarray(x)
-        print(f"{name}: op={op} out_shape={np.asarray(x).shape} dtype={np.asarray(x).dtype}")
+        print(
+            f"{name}: op={op} out_shape={np.asarray(x).shape} dtype={np.asarray(x).dtype}"
+        )
 
     inputs["case_names"] = np.asarray([c[0] for c in CASES])
     np.savez(GOLDEN / "inputs.npz", **inputs)

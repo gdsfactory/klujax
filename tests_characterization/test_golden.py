@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
-import jax.numpy as jnp
 import klujax
 
 GOLDEN = Path(__file__).resolve().parent / "golden"

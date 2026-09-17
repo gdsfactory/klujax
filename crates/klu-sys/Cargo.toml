@@ -1,10 +1,10 @@
-[package]
-name = "klu-sys"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-description = "Static Rust bindings to the SuiteSparse C KLU library"
-links = "klu"
-
 [build-dependencies]
 cc = { version = "1.0.83", features = ["parallel"] }
+
+[package]
+description = "Static Rust bindings to the SuiteSparse C KLU library"
+edition.workspace = true
+license.workspace = true
+links = "klu"
+name = "klu-sys"
+version.workspace = true

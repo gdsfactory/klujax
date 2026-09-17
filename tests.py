@@ -15,6 +15,11 @@ from jax import lax
 import klujax
 from klujax import COMPLEX_DTYPES, coalesce
 
+try:
+    import resource
+except ImportError:  # e.g. Windows
+    resource = None
+
 OPS_DENSE = {  # sparse to dense
     klujax.dot: lax.dot,
     klujax.solve: jsp.linalg.solve,
@@ -693,9 +698,7 @@ def _get_rss_kb():
                     return int(line.split()[1])
     except FileNotFoundError:
         pass
-    try:
-        import resource
-    except ImportError:  # e.g. Windows
+    if resource is None:
         return 0
     usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     # Linux reports KiB, macOS reports bytes.

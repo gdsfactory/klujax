@@ -8,12 +8,12 @@ matrices. Also checks the oracle-free residual ||Ax - b||.
 
 from __future__ import annotations
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 import scipy.sparse as sp
 from scipy.sparse.linalg import spsolve
 
-import jax.numpy as jnp
 import klujax
 from tests_characterization.helpers import DTYPES, rand_coo, rand_rhs
 
@@ -132,12 +132,18 @@ def test_dot_oracle(dtype):
 
     x1 = rand_rhs((n,), dtype, 21)
     np.testing.assert_allclose(
-        np.asarray(klujax.dot(Ai, Aj, Ax, x1)), A @ np.asarray(x1), rtol=1e-10, atol=1e-10
+        np.asarray(klujax.dot(Ai, Aj, Ax, x1)),
+        A @ np.asarray(x1),
+        rtol=1e-10,
+        atol=1e-10,
     )
 
     x2 = rand_rhs((n, 3), dtype, 22)
     np.testing.assert_allclose(
-        np.asarray(klujax.dot(Ai, Aj, Ax, x2)), A @ np.asarray(x2), rtol=1e-10, atol=1e-10
+        np.asarray(klujax.dot(Ai, Aj, Ax, x2)),
+        A @ np.asarray(x2),
+        rtol=1e-10,
+        atol=1e-10,
     )
 
     Ai_b, Aj_b, Ax_b = rand_coo(n, 60, n_lhs=2, dtype=dtype, seed=23)
@@ -150,4 +156,6 @@ def test_dot_oracle(dtype):
     x3 = rand_rhs((2, n), dtype, 24)
     out = np.asarray(klujax.dot(Ai_b, Aj_b, Ax_b, x3))
     for k in range(2):
-        np.testing.assert_allclose(out[k], A_b[k] @ np.asarray(x3)[k], rtol=1e-10, atol=1e-10)
+        np.testing.assert_allclose(
+            out[k], A_b[k] @ np.asarray(x3)[k], rtol=1e-10, atol=1e-10
+        )

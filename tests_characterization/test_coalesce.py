@@ -7,9 +7,9 @@ matters for the Rust port because KLU requires coalesced input.
 
 from __future__ import annotations
 
+import jax.numpy as jnp
 import numpy as np
 
-import jax.numpy as jnp
 from klujax import coalesce
 
 

@@ -6,10 +6,10 @@ klujax documents that float32/complex64 are upcast to float64/complex128.
 
 from __future__ import annotations
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
-import jax.numpy as jnp
 import klujax
 from klujax import COMPLEX_DTYPES
 from tests_characterization.helpers import dense, rand_coo, rand_rhs
