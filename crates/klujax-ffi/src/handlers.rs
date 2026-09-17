@@ -258,7 +258,7 @@ mod real {
             return Err(ErrorInfo::invalid("Ax size mismatch"));
         }
         let handles = engine::factor_batch_raw(ai, aj, ax, n_lhs, sym)?;
-        write(unsafe { u64_ret(frame, 4)? }, &handles)
+        write(unsafe { u64_ret(frame, 0)? }, &handles)
     }
 
     #[no_mangle]
@@ -284,7 +284,7 @@ mod real {
         };
         let ax = unsafe { arg::<T>(frame, 2)? };
         let handles = engine::refactor_batch_raw(ai, aj, ax, n_lhs, sym, numeric)?;
-        write(unsafe { u64_ret(frame, 5)? }, &handles)
+        write(unsafe { u64_ret(frame, 0)? }, &handles)
     }
 
     #[no_mangle]
@@ -303,7 +303,7 @@ mod real {
         let ax = unsafe { arg::<T>(frame, 2)? };
         let b = unsafe { arg::<T>(frame, 3)? };
         let x = engine::solve_raw(ai, aj, ax, b, n_lhs, n_col, n_rhs)?;
-        write(unsafe { ret::<T>(frame, 4)? }, &x)
+        write(unsafe { ret::<T>(frame, 0)? }, &x)
     }
 
     #[no_mangle]
@@ -354,7 +354,7 @@ mod real {
         } else {
             engine::solve_with_symbol_raw(ai, aj, ax, b, n_lhs, n_col, n_rhs, sym)?
         };
-        write(unsafe { ret::<T>(frame, 5)? }, &x)
+        write(unsafe { ret::<T>(frame, 0)? }, &x)
     }
 
     #[no_mangle]
@@ -438,7 +438,7 @@ mod real {
         }
         let x =
             engine::solve_with_numeric_raw(sym, numeric, &b_full, n_lhs, n_col, n_rhs, transpose)?;
-        let out = unsafe { ret::<T>(frame, 3)? };
+        let out = unsafe { ret::<T>(frame, 0)? };
         let n = out.len().min(x.len());
         out[..n].copy_from_slice(&x[..n]);
         Ok(())
@@ -471,8 +471,8 @@ mod real {
         let b = unsafe { arg::<T>(frame, 3)? };
         let handles = engine::refactor_batch_raw(ai, aj, ax, n_lhs, sym, numeric)?;
         let x = engine::solve_with_numeric_raw(sym, &handles, b, n_lhs, n_col, n_rhs, false)?;
-        write(unsafe { ret::<T>(frame, 6)? }, &x)?;
-        write(unsafe { u64_ret(frame, 7)? }, &handles)
+        write(unsafe { ret::<T>(frame, 0)? }, &x)?;
+        write(unsafe { u64_ret(frame, 1)? }, &handles)
     }
 
     #[no_mangle]
@@ -491,7 +491,7 @@ mod real {
         let ax = unsafe { arg::<T>(frame, 2)? };
         let x = unsafe { arg::<T>(frame, 3)? };
         let out = engine::dot_raw(ai, aj, ax, x, n_lhs, n_col, n_rhs)?;
-        write(unsafe { ret::<T>(frame, 4)? }, &out)
+        write(unsafe { ret::<T>(frame, 0)? }, &out)
     }
 
     // Keep the import used in all feature configurations.

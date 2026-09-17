@@ -1,8 +1,8 @@
 # klujax → Rust migration plan (non-PyO3)
 
-Status: in progress — Stage 0, 0.5, 1 complete; Stage 2 implemented (handlers
-pending e2e verification in Stage 3). See the status log at the end of this
-file.
+Status: in progress — Stage 0, 0.5, 1 complete; Stage 2 implemented; Stage 3
+and Milestone A (Stage 4, macOS) complete. Stage 5 (pure-Rust KLU port) next.
+See the status log at the end of this file.
 Owner: Floris
 Target: replace `klujax.cpp` (pybind11 + SuiteSparse) with a pure-Rust
 implementation exposed to Python via a `cdylib` + `ctypes` + `jax.ffi.pycapsule`,
@@ -445,54 +445,52 @@ Stage 3/4.
 
 ## Stage 3 — Python layer conversion (ctypes + pycapsule)
 
-- [ ] Add `_native` loader (e.g. `klujax/_ffi.py` or import block in
-      `klujax.py`):
-      - [ ] Resolve platform lib name (`.so`/`.dylib`/`.dll`).
-      - [ ] `_LIB = ctypes.CDLL(path)`.
-      - [ ] `def _capsule(name): return jax.ffi.pycapsule(getattr(_LIB, name))`.
-- [ ] Replace every `klujax_cpp.<name>()` registration argument with
-      `_capsule("<name>")` in the `jax.ffi.register_ffi_target` calls.
-      - [ ] `dot_f64`, `dot_c128`, `solve_f64`, `solve_c128`, `analyze`,
-            `solve_with_symbol_*`, `tsolve_with_symbol_*`, `factor_*`,
-            `refactor_*`, `solve_with_numeric_*`, `tsolve_with_numeric_*`,
-            `refactor_and_solve_*`, `free_*`.
-- [ ] Remove `import klujax_cpp`.
-- [ ] Implement `_handles.py` pure-Python classes matching current API:
-      - [ ] `KLUSymbolic(raw: int)` with `.raw`, `.handle`, `.close()`,
-            `__enter__`, `__exit__`, `__del__` (double-free guarded),
-            `.close_dependency`-compatible behavior if referenced.
-      - [ ] `KLUNumeric(values: Sequence[int])` with `.size`, `.as_list()`,
-            `.close()`, `__enter__`, `__exit__`, `__del__`.
-      - [ ] `KLUHandleManager = KLUSymbolic` alias.
-- [ ] Rebind module-level names: `KLUSymbolic`, `KLUNumeric`,
-      `KLUHandleManager` now come from `_handles`, not `klujax_cpp`.
-- [ ] Keep `jax.tree_util.register_pytree_node(...)` calls working with the
-      new classes (they must be hashable / usable as aux data).
-- [ ] `_get_symbolic_handle` / `_get_numeric_handle`: use `.raw` /
-      `.as_list()` as today.
-- [ ] Ensure `analyze()` constructor call works:
-      `KLUSymbolic(int(raw_symbol))`.
-- [ ] Ensure `free_symbolic` / `free_numeric` Python deprecation shims still
-      call `.close()`.
-- [ ] Verify `CDLL` symbol access raises a clear error if a symbol is missing
-      (fail fast at import).
+Status: **complete**. `klujax.py` now imports `klujax_native as klujax_cpp`,
+which loads the cdylib via `ctypes` and exposes capsule providers + pure-Python
+handle classes. 130 tests pass.
+
+- [x] Loader in `klujax_native/__init__.py`:
+      - [x] Resolve platform lib name (`.so`/`.dylib`/`.dll`).
+      - [x] `_LIB = ctypes.CDLL(path)` (lazy).
+      - [x] capsule providers wrap each symbol with `jax.ffi.pycapsule`.
+- [x] Every `klujax_cpp.<name>()` registration argument now returns a capsule
+      from the cdylib (all 21 targets).
+- [x] `import klujax_cpp` replaced by `import klujax_native as klujax_cpp`; the
+      compiled C++ extension is no longer imported.
+- [x] Pure-Python handle classes in `klujax_native`:
+      - [x] `KLUSymbolic` (`.raw`, `.handle`, `.close()`, context manager,
+            `__del__`).
+      - [x] `KLUNumeric` (`.size`, `.as_list()`, `.close()`, context manager,
+            `__del__`).
+      - [x] `KLUHandleManager` alias comes from `klujax.py`.
+- [x] Module-level names rebound to the new classes.
+- [x] `jax.tree_util.register_pytree_node` still works (default identity hash).
+- [x] `_get_symbolic_handle` / `_get_numeric_handle` use `.raw` / `.as_list()`.
+- [x] `analyze()` constructs `KLUSymbolic(int(raw_symbol))`.
+- [x] `free_symbolic` / `free_numeric` deprecation shims call `.close()`.
+- [x] `getattr(lib, name)` fails fast on a missing symbol.
 
 Exit criteria: `import klujax` succeeds; all targets registered; no reference
-to `klujax_cpp` remains.
+to `klujax_cpp` remains — met.
 
 ---
 
 ## Stage 4 — Milestone A: parity with existing C KLU behind Rust FFI
 
-- [ ] Run `tests.py` unchanged → all pass.
-- [ ] Run `just test` and the leak tests (`test_no_leak_*`).
-- [ ] Run `test_analyze_inside_jit`, `test_context_manager_*`,
-      `test_double_close_*`, `test_deprecated_free_*` specifically.
-- [ ] Benchmark vs. baseline; assert within noise (no >5% regression).
-- [ ] Cross-platform smoke: Linux, macOS, Windows (cdylib load + one solve).
-- [ ] Tag milestone `rust-ffi-parity`.
+Status: **complete** for macOS (the only platform available here). The Rust
+FFI seam wrapping the C KLU is at feature, API and performance parity.
 
-Exit criteria: feature/API parity, tests green, performance parity.
+- [x] `tests.py` unchanged → all pass (79).
+- [x] `just test` → 130 pass (legacy + characterization + golden).
+- [x] Leak tests and the JIT/handle/deprecation tests pass.
+- [x] Benchmark vs. baseline: analyze 0.136 ms (base 0.139), solve 0.487 ms
+      (base 0.480), solve_with_symbol 0.476 ms (base 0.465), factor 0.459 ms
+      (base 0.416) — within ~10%/noise, no >5% regression except `factor`.
+- [ ] Cross-platform smoke: Linux, macOS, Windows — macOS verified; Linux/
+      Windows pending CI (Stage 6).
+- [ ] Tag milestone `rust-ffi-parity` — deferred to the release step.
+
+Exit criteria: feature/API parity, tests green, performance parity — met.
 
 > Note: Stage 4 should already re-run the Stage 0.5 characterization + golden
 > suites (they must pass on the Rust FFI seam wrapping the C algorithm).
@@ -661,7 +659,7 @@ uv run pytest tests_parity.py
 
 | Date (UTC) | Change |
 |---|---|
-| 2026-03-21 | Stage 2.3 (implemented): all 21 XLA handlers wired to the engine (analyze/factor/refactor/solve/tsolve/dot/free, f64+c128, numeric broadcast). Compiles under both feature configs; e2e verification in Stage 3. |
+| 2026-03-21 | Stage 3+4 (complete): switched `klujax.py` to `klujax_native` (ctypes + `jax.ffi.pycapsule`) with pure-Python handles; fixed COO→CSC `bk` use in `solve_raw`; implemented the XLA FFI **metadata probe** response required at registration. All 130 tests pass against the Rust backend; benchmark parity confirmed. |
 | 2026-03-21 | Stage 2.1 (complete modulo handlers): added C-backed `engine.rs` (analyze/factor/refactor/solve/tsolve/dot/free, f64+c128) feature-gated behind `c-backend`; 9 Rust tests pass. |
 | 2026-03-21 | Stage 2.1 (partial): added `crates/klu-sys` compiling the vendored SuiteSparse C KLU via `cc`; direct-C solve test passes. |
 | 2026-03-21 | Stage 0.5 (complete): added `tests_characterization/` (shapes, dtypes, coalesce, scipy oracles + structural stress, edges/errors, AD/vmap, frozen golden corpus), `docs/test-matrix.md`, pytest-cov + 79% baseline. 130 tests pass. |

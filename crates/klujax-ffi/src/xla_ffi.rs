@@ -32,6 +32,34 @@ pub const XLA_FFI_RET_TYPE_BUFFER: c_int = 1;
 /// `XLA_FFI_ExecutionStage_EXECUTE`.
 pub const XLA_FFI_STAGE_EXECUTE: c_int = 3;
 
+/// `XLA_FFI_Extension_Metadata`.
+pub const XLA_FFI_EXTENSION_METADATA: c_int = 1;
+
+/// `XLA_FFI_TypeId`.
+#[repr(C)]
+#[derive(Debug)]
+pub struct XLA_FFI_TypeId {
+    pub type_id: i64,
+}
+
+/// `XLA_FFI_Metadata`.
+#[repr(C)]
+#[derive(Debug)]
+pub struct XLA_FFI_Metadata {
+    pub struct_size: usize,
+    pub api_version: XLA_FFI_Api_Version,
+    pub traits: u32,
+    pub state_type_id: XLA_FFI_TypeId,
+}
+
+/// `XLA_FFI_Metadata_Extension`.
+#[repr(C)]
+#[derive(Debug)]
+pub struct XLA_FFI_Metadata_Extension {
+    pub extension_base: XLA_FFI_Extension_Base,
+    pub metadata: *mut XLA_FFI_Metadata,
+}
+
 /// `XLA_FFI_Error_Code_*`.
 pub mod error_code {
     use core::ffi::c_int;

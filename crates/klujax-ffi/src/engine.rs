@@ -533,7 +533,7 @@ pub fn solve_raw<T: Scalar>(
 ) -> Result<Vec<T>, ErrorInfo> {
     let n_nz = ax.len() / n_lhs;
     validate(ai, aj, n_lhs, n_col, n_rhs, n_nz)?;
-    let (mut bi, mut bp, _) = coo_to_csc(n_col, n_nz, ai, aj);
+    let (mut bi, mut bp, bk) = coo_to_csc(n_col, n_nz, ai, aj);
     let mut x_temp = vec![T::zero(); n_lhs * n_col * n_rhs];
     for m in 0..n_lhs {
         for n in 0..n_col {
@@ -557,7 +557,7 @@ pub fn solve_raw<T: Scalar>(
     let mut result = Ok(());
     for i in 0..n_lhs {
         let m = i * n_nz;
-        let mut bx: Vec<T> = (0..n_nz).map(|k| ax[m + k]).collect();
+        let mut bx: Vec<T> = (0..n_nz).map(|k| ax[m + bk[k] as usize]).collect();
         let num = unsafe { factor_t(&mut bp, &mut bi, &mut bx, root, &mut common) };
         if num.is_null() || common.status < KLU_OK {
             result = Err(ErrorInfo::invalid(

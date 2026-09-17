@@ -34,7 +34,7 @@ import jax
 import jax.core
 import jax.extend.core
 import jax.numpy as jnp
-import klujax_cpp  # ty: ignore[unresolved-import]
+import klujax_native as klujax_cpp  # ty: ignore[unresolved-import]
 import numpy as np
 from jax.core import ShapedArray
 from jax.interpreters import ad, batching, mlir

@@ -58,7 +58,7 @@ class CargoBuildExt(build_ext):
 _deps_present = all(
     (ROOT / dep).is_dir() for dep in ("suitesparse", "xla", "pybind11")
 )
-_build_cpp = _deps_present and os.environ.get("KLUJAX_BUILD_CPP", "1") == "1"
+_build_cpp = _deps_present and os.environ.get("KLUJAX_BUILD_CPP", "0") == "1"
 
 include_dirs = [
     "xla",

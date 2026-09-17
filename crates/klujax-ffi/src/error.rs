@@ -1,6 +1,9 @@
 //! Error construction and panic containment for XLA FFI handlers.
 
-use crate::xla_ffi::{error_code, XLA_FFI_CallFrame, XLA_FFI_Error, XLA_FFI_Error_Create_Args};
+use crate::xla_ffi::{
+    error_code, XLA_FFI_Api_Version, XLA_FFI_CallFrame, XLA_FFI_Error, XLA_FFI_Error_Create_Args,
+    XLA_FFI_Metadata_Extension, XLA_FFI_TypeId, XLA_FFI_EXTENSION_METADATA,
+};
 use core::ffi::{c_int, CStr};
 use core::mem::size_of;
 use core::ptr::null_mut;
@@ -78,6 +81,10 @@ pub unsafe fn make_error(
 /// and any panic to an `INTERNAL` XLA error. Never unwinds across the FFI
 /// boundary.
 ///
+/// If the call frame carries the metadata extension (a registration-time probe
+/// asking for the handler's supported API version), the metadata is populated
+/// and success is returned without invoking `f`.
+///
 /// # Safety
 ///
 /// `frame` must be a valid call frame passed by XLA (or null, in which case on
@@ -86,9 +93,45 @@ pub unsafe fn guard<F>(frame: *mut XLA_FFI_CallFrame, f: F) -> *mut XLA_FFI_Erro
 where
     F: FnOnce() -> Result<(), ErrorInfo>,
 {
+    if let Some(ext) = unsafe { metadata_extension(frame) } {
+        unsafe { populate_metadata(ext) };
+        return null_mut();
+    }
     match catch_unwind(AssertUnwindSafe(f)) {
         Ok(Ok(())) => null_mut(),
         Ok(Err(info)) => unsafe { make_error(frame, info.code, &info.message) },
         Err(_) => unsafe { make_error(frame, error_code::INTERNAL, c"panic in XLA FFI handler") },
+    }
+}
+
+/// Return the metadata extension if this call is a metadata probe.
+unsafe fn metadata_extension(
+    frame: *mut XLA_FFI_CallFrame,
+) -> Option<*mut XLA_FFI_Metadata_Extension> {
+    if frame.is_null() {
+        return None;
+    }
+    let ext = unsafe { (*frame).extension_start };
+    if ext.is_null() || unsafe { (*ext).type_ } != XLA_FFI_EXTENSION_METADATA {
+        return None;
+    }
+    Some(ext as *mut XLA_FFI_Metadata_Extension)
+}
+
+/// Populate the metadata extension with the FFI API version we implement.
+unsafe fn populate_metadata(ext: *mut XLA_FFI_Metadata_Extension) {
+    let meta = unsafe { (*ext).metadata };
+    if meta.is_null() {
+        return;
+    }
+    unsafe {
+        (*meta).api_version = XLA_FFI_Api_Version {
+            struct_size: size_of::<XLA_FFI_Api_Version>(),
+            extension_start: null_mut(),
+            major_version: 0,
+            minor_version: 3,
+        };
+        (*meta).traits = 0;
+        (*meta).state_type_id = XLA_FFI_TypeId { type_id: 0 };
     }
 }
