@@ -620,6 +620,12 @@ packaging (wheel + self-contained sdist) verified; docs updated. **Met.**
       run is still pending.
 - [x] Keep leak tests (`test_no_leak_symbolic`, `test_no_leak_numeric`) in
       `tests.py`; they pass against the Rust backend.
+- [x] **Downstream integration**: `tests_characterization/test_sax_integration.py`
+      runs klujax as a `sax` (S-parameter circuit simulator) backend. It is
+      skipped unless `sax` is installed (sax pins `jax<0.10` and has a large
+      dependency tree); `just verify-sax` runs it in a dedicated venv.
+      Verified: matches sax's reference backend to `1e-16`; JIT, `grad`, and
+      `vmap` through sax all work.
 
 ### Verification commands
 ```sh
@@ -631,6 +637,7 @@ just test                 # uv run pytest (tests.py + characterization + golden)
 python scripts/ffi_smoke.py
 just verify-linux          # Linux build + static-link check (Docker)
 just verify-linux-tests    # Linux build-from-source + full pytest (Docker)
+just verify-sax            # klujax as a SAX backend (dedicated venv)
 # static-link check (macOS):
 otool -L target/release/libklujax_ffi.dylib | grep -i suitesparse && echo LEAK
 ```
@@ -696,6 +703,7 @@ and scripts are in place and only need external execution.
 
 | Date (UTC) | Change |
 |---|---|
+| 2026-03-21 | Downstream integration: added `tests_characterization/test_sax_integration.py` + `just verify-sax`. klujax works as a `sax` backend (its default): matches sax's `filipsson_gunnar` reference to `1e-16`; JIT/grad/vmap through sax pass. Kept optional (sax pins `jax<0.10`). |
 | 2026-03-21 | **In-scope complete; CI/release scoped out.** The core migration is done and verified on macOS arm64 + Linux aarch64. Cross-platform CI execution, Windows/MSVC, and PyPI release moved to "Follow-up (out of scope)". |
 | 2026-03-21 | Stage 4/5 (Linux end-to-end): `just verify-linux-tests` builds from source in a `rust:1.85-bookworm` container (aarch64) and runs the **full 130-test suite green**. This exposed and fixed a real bug: `setup.py` ignored `CARGO_TARGET_DIR` and looked for the cdylib in the wrong directory. |
 | 2026-03-21 | Stage 5/4 (Linux verified): `just verify-linux` builds `klujax-ffi` in a `rust:1.85-bookworm` container (aarch64, GCC 12.2); `ldd` shows no dynamic SuiteSparse, 21 handlers exported. Added `scripts/verify_linux.sh`. Windows still pending. |

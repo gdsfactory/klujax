@@ -32,6 +32,10 @@ verify-linux:
 verify-linux-tests:
     bash scripts/verify_linux_tests.sh
 
+# Downstream integration: run klujax as a SAX backend (dedicated venv)
+verify-sax:
+    bash scripts/verify_sax.sh
+
 # Format the Rust code
 rust-fmt:
     cargo fmt --all
