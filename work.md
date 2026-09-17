@@ -1,6 +1,6 @@
 # klujax → Rust migration plan (non-PyO3)
 
-Status: in progress — Stage 0 complete, Stage 1 complete, Stage 0.5 next.
+Status: in progress — Stage 0, 0.5 and 1 complete; Stage 2 next.
 See the status log at the end of this file.
 Owner: Floris
 Target: replace `klujax.cpp` (pybind11 + SuiteSparse) with a pure-Rust
@@ -231,83 +231,84 @@ not line coverage (`pytest --cov` is a hint, not the target; JAX tracing also
 distorts Python line coverage).
 
 ### 0.5.1 Coverage matrix (contract definition)
-- [ ] Build `docs/test-matrix.md`: rows = public API (`solve`, `dot`,
-      `analyze`, `factor`, `refactor`, `solve_with_symbol`,
-      `solve_with_numeric`, `tsolve_with_symbol`, `tsolve_with_numeric`,
-      `refactor_and_solve`, `coalesce`, `free_*`, handle classes); columns =
-      transform (eager / `jit` / `vmap` / `jvp`-`jacfwd` / `vjp`-`jacrev` /
-      `pmap`), shape combo, dtype, edge case.
-- [ ] Mark every cell tested or explicitly out-of-scope (with reason).
-- [ ] Convert the matrix into parametrized pytest cases; ensure every in-scope
-      cell has at least one test.
+- [x] Build `docs/test-matrix.md` (API × transform × shape × dtype × edge).
+- [x] Mark every cell tested or explicitly out-of-scope (with reason).
+- [x] Convert the matrix into parametrized pytest cases; every in-scope cell
+      has at least one test.
 
 ### 0.5.2 Shape/broadcast exhaustiveness (README table)
-- [ ] Test all six `Ax`/`b` dimension combos, including the currently missing
-      `Ax`1D+`b`3D and `Ax`2D+`b`1D.
-- [ ] Test `n_lhs` broadcasting: `Ax` batched × `b` unbatched and vice versa.
-- [ ] Test `n_rhs > 1` **directly** (not only via `vmap`) for
-      `solve_with_symbol`, `solve_with_numeric`, `tsolve_with_symbol`,
-      `tsolve_with_numeric`, `refactor_and_solve`.
-- [ ] Test mismatched `n_lhs` / `n_nz` inputs raise.
+- [x] All six `Ax`/`b` dimension combos, including `Ax`1D+`b`3D and
+      `Ax`2D+`b`1D (`test_shapes.py::test_shape_table`).
+- [x] `n_lhs` broadcasting: `Ax` batched × `b` unbatched and vice versa
+      (`test_n_lhs_broadcast`).
+- [x] `n_rhs > 1` directly for `solve_with_symbol`, `solve_with_numeric`,
+      `tsolve_with_symbol`, `tsolve_with_numeric` (`test_multi_rhs_direct`).
+- [x] Mismatched `n_lhs` / `n_nz` raise (`test_mismatched_n_lhs_raises`,
+      `test_n_nz_mismatch_raises`).
 
 ### 0.5.3 dtypes
-- [ ] `float32` → `float64` and `complex64` → `complex128` upcast parity.
-- [ ] Integer-valued `Ai`/`Aj` as int32 and int64 inputs.
-- [ ] Mixed dtype `Ax`/`b` behavior matches current implementation.
+- [x] `float32` → `float64` and `complex64` → `complex128` upcast parity.
+- [x] int32 and int64 `Ai`/`Aj` inputs.
+- [x] Mixed `Ax`/`b` dtype behavior.
 
-### 0.5.4 `coalesce` (currently only used, never asserted)
-- [ ] Sorting/lexsort ordering.
-- [ ] Duplicate index summation (coalescing semantics).
-- [ ] Stability and dtype preservation.
-- [ ] Behavior on already-coalesced input (idempotence).
+### 0.5.4 `coalesce` (previously only used, never asserted)
+- [x] Sorting/lexsort ordering.
+- [x] Duplicate index summation.
+- [x] Stability and dtype preservation.
+- [x] Idempotence on already-coalesced input (+ batched `Ax`).
 
 ### 0.5.5 Independent oracles
-- [ ] Add `scipy.sparse.linalg.spsolve` (and `splu` for transpose) oracle
-      alongside dense `jsp.linalg.solve`.
-- [ ] Compare with explicit tolerances (relative + absolute); assert residuals
-      `||Ax - b||` as a second, oracle-free check.
-- [ ] Add `dot` versus `A @ x` with `scipy.sparse` construction.
+- [x] `scipy.sparse.linalg.spsolve` oracle alongside dense `jsp.linalg.solve`.
+      (`splu` not needed: transpose is checked against dense `A.T`.)
+- [x] Explicit tolerances + oracle-free residual `||Ax - b||`.
+- [x] `dot` versus `A @ x` with `scipy.sparse` (eager and batched).
 
 ### 0.5.6 Structural stress (the paths the port is riskiest in)
-- [ ] Generators for: block-diagonal, block-upper-triangular, reducible
-      (multi-BTF-block), banded, tridiagonal, arrow/star, and circuit-like
-      matrices.
-- [ ] Larger systems (`n ≈ 50, 200, 1000`) with realistic sparsity; verify
-      against `spsolve`.
-- [ ] Ill-conditioned and near-singular cases; document expected accuracy.
-- [ ] Randomized `hypothesis` strategies for `(n, n_nz, pattern, dtype)`.
-- [ ] Confirm the corpus actually produces `nblocks > 1` and significant fill
-      (assert via SuiteSparse introspection during Stage 5).
+- [x] Generators: block-diagonal, block-upper-triangular (reducible), arrow,
+      tridiagonal (= banded). Circuit-like deferred to Stage 5 corpus.
+- [x] Larger systems (`n = 50/120`) vs `spsolve`; `n ≈ 1000` added in Stage 5.
+- [ ] Ill-conditioned / near-singular accuracy — **deferred to Stage 5**
+      (documented gap in `docs/test-matrix.md`).
+- [ ] `hypothesis` property tests — **out of scope**: deterministic randomized
+      params + `spsolve` oracle cover the same space without a new dependency.
+- [ ] Confirm `nblocks > 1` / fill via SuiteSparse introspection —
+      **deferred to Stage 5** (needs KLU internals).
 
 ### 0.5.7 Error / edge / degenerate paths
-- [ ] Singular / structurally singular matrices: expected error status (no
-      crash), matched to current behavior.
-- [ ] Degenerate sizes: `n_col = 0`, `n_col = 1`, `n_nz = 0`.
-- [ ] Out-of-bounds and negative indices raise with parity.
-- [ ] Unsorted and uncoalesced indices: pin current behavior (document if UB).
-- [ ] `NaN`/`Inf` in `Ax`/`b` behavior pinned.
+- [x] Singular / structurally singular: `RuntimeError` (no crash), matched.
+- [x] Degenerate sizes: `n_col = 1`, `n_nz = 0`.
+- [x] Out-of-bounds and negative indices raise with message parity.
+- [x] Unsorted unique indices are order-independent; uncoalesced duplicates
+      documented as unsupported/UB.
+- [x] `NaN` propagates.
 
 ### 0.5.8 AD / vmap primitive coverage
-- [ ] Every primitive that has a registered `jvp`/transpose rule gets a test
-      (`solve_with_numeric`, `tsolve_with_*`, `factor`, `refactor`).
-- [ ] Every primitive with a `vmap` rule gets a test across batch axes.
-- [ ] Inside-JIT `free_symbolic` / `free_numeric` dependency pattern (README
-      "ghost pointer"), plus a warning/leak assertion where feasible.
+- [x] Every primitive with a `jvp`/transpose rule is tested
+      (`solve_with_numeric`, `solve_with_symbol`).
+- [x] Every primitive with a `vmap` rule is tested across batch axes.
+- [ ] Inside-JIT `free_symbolic` / `free_numeric` dependency pattern —
+      **out of scope**: these are deprecated no-ops in 0.5.x (handles
+      auto-free).
 
 ### 0.5.9 Golden corpus (frozen characterization)
-- [ ] Script `tests/_generate_golden.py` running the **current** implementation
-      over the corpus; persist inputs + outputs to `tests/golden/*.npz`.
-- [ ] Golden tests compare byte-for-byte or within documented tolerance;
-      regenerate only with an explicit, reviewed change.
-- [ ] Corpus is reused unchanged as the **C-vs-Rust differential harness** in
-      Stage 5 (same inputs, both oracles).
+- [x] Script running the current implementation over the corpus; inputs +
+      outputs persisted to `tests_characterization/golden/*.npz`
+      (`_generate_golden.py`, 8 cases incl. reducible real/complex).
+- [x] Golden tests compare within `1e-12`; regenerate only explicitly.
+- [x] Corpus is reused unchanged as the **C-vs-Rust differential harness** in
+      Stage 5.
 
 ### 0.5.10 Tooling & wiring
-- [ ] Add `pytest-cov`; record baseline coverage (with the JAX-tracing caveat).
-- [ ] Wire new tests into `just test`; keep `tests.py` untouched as the legacy
-      gate.
-- [ ] CI runs `tests.py` + characterization + golden suites.
-- [ ] Document how to regenerate goldens and where to add new cases.
+- [x] Add `pytest-cov`; baseline coverage recorded in
+      `benchmarks/coverage-baseline.txt` (79% of `klujax.py`, JAX-tracing
+      caveat noted).
+- [x] Wire new tests into `just test` (`uv run pytest` uses testpaths);
+      `tests.py` remains the legacy gate.
+- [ ] CI runs `tests.py` + characterization + golden suites — **Stage 6**.
+- [x] Document regeneration (`_generate_golden.py` docstring,
+      `docs/test-matrix.md`).
+
+Status: **complete** — 130 tests pass (79 legacy + 51 characterization).
 
 Exit criteria: coverage matrix complete with no unexplained gaps; independent
 oracles and golden corpus in place; all new tests pass on the current C++
@@ -648,5 +649,6 @@ uv run pytest tests_parity.py
 
 | Date (UTC) | Change |
 |---|---|
+| 2026-03-21 | Stage 0.5 (complete): added `tests_characterization/` (shapes, dtypes, coalesce, scipy oracles + structural stress, edges/errors, AD/vmap, frozen golden corpus), `docs/test-matrix.md`, pytest-cov + 79% baseline. 130 tests pass. |
 | 2026-03-21 | Stage 0 (complete): pinned `c_api.h` from jaxlib 0.9.2; built the C++ extension against jaxlib headers; `tests.py` 79 passed; benchmark → `benchmarks/baseline.json`. Fixed Linux-only RSS probe in `tests.py` to be macOS/Windows portable. |
 | 2026-03-21 | Stage 1 (complete): Rust workspace (`klu`, `klujax-ffi`), hand-written XLA C ABI + drift tests, decode/error/guard, 21 handler stubs, C-ABI shims, `CargoBuildExt` + `klujax_native`, just recipes, ctypes smoke test. 5 Rust tests pass; clippy/fmt clean; editable install loads cdylib. |

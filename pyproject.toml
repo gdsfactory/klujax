@@ -8,6 +8,7 @@ dev = [
   "ipykernel>=6.29.5",
   "pre-commit>=4.1.0",
   "pytest>=8.3.4",
+  "pytest-cov>=6.0.0",
   "ruff>=0.9.7",
   "setuptools>=75.8.0",
   "tbump>=6.11.0",
@@ -64,7 +65,8 @@ action = "commit-tag-and-push"
 
 [tool.pytest.ini_options]
 addopts = '--tb=short'
-testpaths = ["tests.py"]
+testpaths = ["tests.py", "tests_characterization"]
+pythonpath = ["."]
 
 [tool.ruff]
 fix = true

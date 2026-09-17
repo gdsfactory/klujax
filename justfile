@@ -63,7 +63,15 @@ inplace:
 
 # Run tests
 test:
-    uv run pytest tests.py
+    uv run pytest
+
+# Regenerate the golden corpus (requires the C++ extension)
+golden:
+    PYTHONPATH=. uv run python tests_characterization/_generate_golden.py
+
+# Run tests with coverage
+coverage:
+    uv run pytest --cov=klujax --cov-report=term-missing
 
 # Build docs
 docs:
