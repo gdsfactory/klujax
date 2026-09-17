@@ -14,10 +14,18 @@ use core::ffi::{c_int, c_void};
 /// `KLU_OK`.
 pub const KLU_OK: c_int = 0;
 
-/// Opaque `klu_symbolic`.
+/// `klu_symbolic` (leading fields; `n` is all we read).
+///
+/// The full struct is public in `klu.h`; trailing fields are omitted because
+/// they do not affect the offset of `n`.
 #[repr(C)]
 pub struct klu_symbolic {
-    _private: [u8; 0],
+    pub symmetry: f64,
+    pub est_flops: f64,
+    pub lnz: f64,
+    pub unz: f64,
+    pub Lnz: *mut f64,
+    pub n: i32,
 }
 
 /// Opaque `klu_numeric`.
