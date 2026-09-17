@@ -3,15 +3,6 @@
 //! Each decodes the [`XLA_FFI_CallFrame`] into lifetime-safe [`Frame`] buffers
 //! and calls the C-backed engine.
 
-#![allow(clippy::too_many_arguments)]
-// TODO(hardening/stage-2): once handlers are generated with `Frame<'a>` and
-// carry `# Safety` docs and explicit unsafe scopes, remove these allows.
-#![allow(
-    clippy::missing_safety_doc,
-    clippy::undocumented_unsafe_blocks,
-    unsafe_op_in_unsafe_fn
-)]
-
 use crate::call_frame::{Buffer, BufferMut, Frame};
 use crate::engine::{self, Scalar};
 use crate::error::{guard, ErrorInfo};
@@ -34,30 +25,35 @@ fn ret<'a, T: Scalar>(frame: &Frame<'a>, i: usize) -> Result<&'a mut [T], ErrorI
 }
 
 fn s32_arg<'a>(frame: &Frame<'a>, i: usize) -> Result<&'a [i32], ErrorInfo> {
+    // SAFETY: `frame` is valid per the calling handler's contract.
     let b = unsafe { frame.arg_buffer(i)? };
     b.expect_dtype(dtype::S32, "argument")?;
     Ok(b.as_slice::<i32>())
 }
 
 fn u64_arg<'a>(frame: &Frame<'a>, i: usize) -> Result<&'a [u64], ErrorInfo> {
+    // SAFETY: `frame` is valid per the calling handler's contract.
     let b = unsafe { frame.arg_buffer(i)? };
     b.expect_dtype(dtype::U64, "argument")?;
     Ok(b.as_slice::<u64>())
 }
 
 fn u64_ret<'a>(frame: &Frame<'a>, i: usize) -> Result<&'a mut [u64], ErrorInfo> {
+    // SAFETY: result buffers are uniquely owned by this call.
     let mut b = unsafe { frame.ret_buffer(i)? };
     b.expect_dtype(dtype::U64, "result")?;
     Ok(b.as_slice_mut::<u64>())
 }
 
 fn i32_ret<'a>(frame: &Frame<'a>, i: usize) -> Result<&'a mut [i32], ErrorInfo> {
+    // SAFETY: result buffers are uniquely owned by this call.
     let mut b = unsafe { frame.ret_buffer(i)? };
     b.expect_dtype(dtype::S32, "result")?;
     Ok(b.as_slice_mut::<i32>())
 }
 
 fn out_dims(frame: &Frame<'_>, i: usize) -> Result<Vec<usize>, ErrorInfo> {
+    // SAFETY: `frame` is valid per the calling handler's contract.
     let b = unsafe { frame.arg_buffer(i)? };
     Ok(b.dims().iter().map(|&d| d as usize).collect())
 }
@@ -241,12 +237,22 @@ fn dot_impl<T: Scalar>(frame: &Frame<'_>) -> Result<(), ErrorInfo> {
 
 macro_rules! handler {
     ($name:ident, |$frame:ident| $body:expr) => {
+        /// XLA typed-FFI handler symbol.
+        ///
+        /// # Safety
+        ///
+        /// `frame_ptr` must be the valid, non-null call frame XLA passes to
+        /// this handler, and it must stay alive for the duration of the call.
         #[no_mangle]
         pub unsafe extern "C" fn $name(frame_ptr: *mut XLA_FFI_CallFrame) -> *mut XLA_FFI_Error {
-            guard(frame_ptr, || {
-                let $frame = &unsafe { Frame::from_raw(frame_ptr) };
-                $body
-            })
+            // SAFETY: `frame_ptr` is the valid call frame XLA passed to this
+            // handler; it stays alive for the duration of the call.
+            unsafe {
+                guard(frame_ptr, || {
+                    let $frame = &Frame::from_raw(frame_ptr);
+                    $body
+                })
+            }
         }
     };
 }
