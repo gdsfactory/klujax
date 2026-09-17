@@ -323,7 +323,8 @@ distorts Python line coverage).
       caveat noted).
 - [x] Wire new tests into `just test` (`uv run pytest` uses testpaths);
       `tests.py` remains the legacy gate.
-- [ ] CI runs `tests.py` + characterization + golden suites — **Stage 6**.
+- [x] CI workflow authored to run `tests.py` + characterization + golden
+      suites (executing it is follow-up).
 - [x] Document regeneration (`_generate_golden.py` docstring,
       `docs/test-matrix.md`).
 
@@ -507,7 +508,7 @@ FFI seam wrapping the C KLU is at feature, API and performance parity.
 - [x] Cross-platform smoke: **macOS (arm64)** native and **Linux (aarch64,
       GCC 12.2)** via Docker — `just verify-linux-tests` builds from source and
       runs the **full 130-test suite** green; **Windows** pending CI.
-- [ ] Tag milestone `rust-ffi-parity` — deferred to the release step.
+- [ ] Tag milestone `rust-ffi-parity` — follow-up (release step).
 
 Exit criteria: feature/API parity, tests green, performance parity — met.
 
