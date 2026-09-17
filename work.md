@@ -625,7 +625,11 @@ packaging (wheel + self-contained sdist) verified; docs updated. **Met.**
       skipped unless `sax` is installed (sax pins `jax<0.10` and has a large
       dependency tree); `just verify-sax` runs it in a dedicated venv.
       Verified: matches sax's reference backend to `1e-16`; JIT, `grad`, and
-      `vmap` through sax all work.
+      `vmap` through sax all work. Additionally, sax's **own test suite**
+      (`gdsfactory/sax` @ 0.18.2, `src/tests`) was run against the Rust klujax:
+      **265 passed, 1 skipped, 1 failed**. The single failure is a pre-existing
+      `sax.try_into[complex]` pydantic/jax assertion in one notebook, reached
+      before any solver call (unrelated to klujax). `default_backend == "klu"`.
 
 ### Verification commands
 ```sh
@@ -703,6 +707,7 @@ and scripts are in place and only need external execution.
 
 | Date (UTC) | Change |
 |---|---|
+| 2026-03-21 | Downstream suite: ran sax's own `src/tests` (gdsfactory/sax 0.18.2) against the Rust klujax wheel — **265 passed, 1 skipped, 1 failed**; the failure is an unrelated pre-existing `sax.try_into[complex]` pydantic/jax notebook assertion (no solver call). `default_backend == "klu"`. |
 | 2026-03-21 | Downstream integration: added `tests_characterization/test_sax_integration.py` + `just verify-sax`. klujax works as a `sax` backend (its default): matches sax's `filipsson_gunnar` reference to `1e-16`; JIT/grad/vmap through sax pass. Kept optional (sax pins `jax<0.10`). |
 | 2026-03-21 | **In-scope complete; CI/release scoped out.** The core migration is done and verified on macOS arm64 + Linux aarch64. Cross-platform CI execution, Windows/MSVC, and PyPI release moved to "Follow-up (out of scope)". |
 | 2026-03-21 | Stage 4/5 (Linux end-to-end): `just verify-linux-tests` builds from source in a `rust:1.85-bookworm` container (aarch64) and runs the **full 130-test suite green**. This exposed and fixed a real bug: `setup.py` ignored `CARGO_TARGET_DIR` and looked for the cdylib in the wrong directory. |
