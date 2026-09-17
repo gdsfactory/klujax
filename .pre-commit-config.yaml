@@ -34,4 +34,5 @@ repos:
     hooks:
       - id: pretty-format-toml
         args: [--autofix]
-        exclude: uv\.lock
+        # cargo owns Cargo.lock's formatting; uv owns uv.lock's.
+        exclude: (uv|Cargo)\.lock
