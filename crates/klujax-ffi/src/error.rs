@@ -1,8 +1,5 @@
 //! Error construction and panic containment for XLA FFI handlers.
 
-// TODO(hardening/stage-6): document the remaining unsafe work; remove this allow.
-#![allow(clippy::undocumented_unsafe_blocks)]
-
 use crate::xla_ffi::{
     error_code, XLA_FFI_Api_Version, XLA_FFI_CallFrame, XLA_FFI_Error, XLA_FFI_Error_Create_Args,
     XLA_FFI_Metadata_Extension, XLA_FFI_TypeId, XLA_FFI_EXTENSION_METADATA,
@@ -63,10 +60,13 @@ pub unsafe fn make_error(
     if frame.is_null() {
         return null_mut();
     }
+    // SAFETY: `frame` is non-null and valid per this fn's `# Safety`.
     let api = unsafe { (*frame).api };
     if api.is_null() {
         return null_mut();
     }
+    // SAFETY: `api` is non-null; `XLA_FFI_Api`'s prefix layout is pinned in
+    // `xla_ffi.rs` (and offset-tested there).
     let create = match unsafe { (*api).XLA_FFI_Error_Create } {
         Some(create) => create,
         None => return null_mut(),
@@ -77,6 +77,7 @@ pub unsafe fn make_error(
         message: message.as_ptr(),
         errc: code,
     };
+    // SAFETY: `create` is a valid XLA callback and `args` is fully initialised.
     unsafe { create(&mut args) }
 }
 
@@ -96,13 +97,17 @@ pub unsafe fn guard<F>(frame: *mut XLA_FFI_CallFrame, f: F) -> *mut XLA_FFI_Erro
 where
     F: FnOnce() -> Result<(), ErrorInfo>,
 {
+    // SAFETY: `frame` may be null; `metadata_extension` handles that.
     if let Some(ext) = unsafe { metadata_extension(frame) } {
+        // SAFETY: `ext` is a valid metadata extension (checked above).
         unsafe { populate_metadata(ext) };
         return null_mut();
     }
     match catch_unwind(AssertUnwindSafe(f)) {
         Ok(Ok(())) => null_mut(),
+        // SAFETY: `frame` is valid per this fn's `# Safety`.
         Ok(Err(info)) => unsafe { make_error(frame, info.code, &info.message) },
+        // SAFETY: as above.
         Err(_) => unsafe { make_error(frame, error_code::INTERNAL, c"panic in XLA FFI handler") },
     }
 }
@@ -114,7 +119,10 @@ unsafe fn metadata_extension(
     if frame.is_null() {
         return None;
     }
+    // SAFETY: `frame` is non-null (checked) and valid per the caller.
     let ext = unsafe { (*frame).extension_start };
+    // SAFETY: `ext` is non-null (checked); `XLA_FFI_Extension_Base`'s layout is
+    // pinned in `xla_ffi.rs`.
     if ext.is_null() || unsafe { (*ext).type_ } != XLA_FFI_EXTENSION_METADATA {
         return None;
     }
@@ -123,10 +131,13 @@ unsafe fn metadata_extension(
 
 /// Populate the metadata extension with the FFI API version we implement.
 unsafe fn populate_metadata(ext: *mut XLA_FFI_Metadata_Extension) {
+    // SAFETY: `ext` is a valid metadata extension per the caller.
     let meta = unsafe { (*ext).metadata };
     if meta.is_null() {
         return;
     }
+    // SAFETY: `meta` is non-null and points to the out-param metadata struct
+    // the XLA runtime owns for this registration probe.
     unsafe {
         (*meta).api_version = XLA_FFI_Api_Version {
             struct_size: size_of::<XLA_FFI_Api_Version>(),
