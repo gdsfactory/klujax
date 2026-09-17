@@ -3,9 +3,10 @@ repos:
     hooks:
       - id: ty
         name: ty
-        entry: uv run --no-project ty check
+        entry: uv run --no-project ty check klujax.py klujax_native
         language: system
         types_or: [python]
+        pass_filenames: false
       - id: cargo-fmt
         name: cargo fmt
         entry: cargo fmt --all -- --check

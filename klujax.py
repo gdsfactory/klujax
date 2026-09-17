@@ -39,7 +39,7 @@ from jax.core import ShapedArray
 from jax.interpreters import ad, batching, mlir
 from jaxtyping import Array
 
-import klujax_native as klujax_cpp  # ty: ignore[unresolved-import]
+import klujax_native as klujax_cpp
 
 KLUSymbolic = klujax_cpp.KLUSymbolic
 KLUNumeric = klujax_cpp.KLUNumeric

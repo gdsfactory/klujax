@@ -84,20 +84,95 @@ TARGETS = [
 ]
 
 
-def _make_capsule_provider(name: str):
-    def provider():
-        import jax.ffi
+def _capsule(name: str):
+    """Wrap the cdylib symbol ``name`` as a JAX FFI target ``PyCapsule``."""
+    import jax.ffi
 
-        return jax.ffi.pycapsule(getattr(lib(), name))
-
-    provider.__name__ = name
-    provider.__qualname__ = name
-    return provider
+    return jax.ffi.pycapsule(getattr(lib(), name))
 
 
-for _target in TARGETS:
-    globals()[_target] = _make_capsule_provider(_target)
-del _target
+def dot_f64():
+    return _capsule("dot_f64")
+
+
+def dot_c128():
+    return _capsule("dot_c128")
+
+
+def solve_f64():
+    return _capsule("solve_f64")
+
+
+def solve_c128():
+    return _capsule("solve_c128")
+
+
+def solve_with_symbol_f64():
+    return _capsule("solve_with_symbol_f64")
+
+
+def solve_with_symbol_c128():
+    return _capsule("solve_with_symbol_c128")
+
+
+def tsolve_with_symbol_f64():
+    return _capsule("tsolve_with_symbol_f64")
+
+
+def tsolve_with_symbol_c128():
+    return _capsule("tsolve_with_symbol_c128")
+
+
+def factor_f64():
+    return _capsule("factor_f64")
+
+
+def factor_c128():
+    return _capsule("factor_c128")
+
+
+def refactor_f64():
+    return _capsule("refactor_f64")
+
+
+def refactor_c128():
+    return _capsule("refactor_c128")
+
+
+def refactor_and_solve_f64():
+    return _capsule("refactor_and_solve_f64")
+
+
+def refactor_and_solve_c128():
+    return _capsule("refactor_and_solve_c128")
+
+
+def solve_with_numeric_f64():
+    return _capsule("solve_with_numeric_f64")
+
+
+def solve_with_numeric_c128():
+    return _capsule("solve_with_numeric_c128")
+
+
+def tsolve_with_numeric_f64():
+    return _capsule("tsolve_with_numeric_f64")
+
+
+def tsolve_with_numeric_c128():
+    return _capsule("tsolve_with_numeric_c128")
+
+
+def free_numeric():
+    return _capsule("free_numeric")
+
+
+def free_symbolic():
+    return _capsule("free_symbolic")
+
+
+def analyze():
+    return _capsule("analyze")
 
 
 class KLUSymbolic:

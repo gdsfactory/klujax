@@ -1,7 +1,8 @@
 # klujax Rust hardening plan
 
-Status: **in progress** — Stage 0 (guardrails + unsafe budget) complete;
-Stages 1–6 remain. Baseline: **222** code-only `unsafe` occurrences. Supersedes
+Status: **in progress** — Stages 0 and 1 complete. Unsafe budget lowered
+**222 → 89** (already under the Stage 6 target of < 110); no unbounded
+lifetimes remain. Stages 2–6 remain. Supersedes
 the previous migration plan (the migration is done: Rust `cdylib`, XLA FFI,
 `klu-sys` statically linking SuiteSparse, Python via ctypes/`pycapsule`; 130
 pytest + sax downstream green on macOS/Linux).
@@ -94,9 +95,11 @@ script runs and passes ✓. **Met.**
 
 ## Stage 1 — Lifetime-safe buffer wrappers (kill `&'static`)
 
-Goal: make it *impossible* to return slices that outlive the XLA call frame.
+Status: **complete**. Decoded slices are tied to the `Frame<'a>` borrow; there
+are no `&'static`/unbounded pointer-derived slices, and unsafe dropped
+**222 → 89** in this stage.
 
-Current problem:
+Was:
 
 ```rust
 // hidden unbound lifetime
@@ -104,28 +107,25 @@ pub unsafe fn as_f64<'a>(buf: *const XLA_FFI_Buffer) -> &'a [f64];
 unsafe fn arg<T: Scalar>(frame: *mut XLA_FFI_CallFrame, i: usize) -> Result<&'static [T], ErrorInfo>;
 ```
 
-Plan:
+- [x] Added `Frame<'a>` in `call_frame.rs` (`PhantomData<&'a XLA_FFI_CallFrame>`),
+      built once per handler via `Frame::from_raw`.
+- [x] Decode moved onto `Frame<'a>`:
+      - `Frame::arg_buffer(i) -> Result<Buffer<'a>, _>`
+      - `Frame::ret_buffer(i) -> Result<BufferMut<'a>, _>`
+      - `Buffer<'a>`: `dims() -> &'a [i64]`, `element_count()`, `dtype()`,
+        `expect_dtype()`, `as_slice::<T>() -> &'a [T]`.
+      - `BufferMut<'a>`: same plus `as_slice_mut::<T>() -> &'a mut [T]`.
+- [x] `Buffer`/`BufferMut` validate rank/dims at construction; `as_slice` is the
+      single documented slice-construction point.
+- [x] `handlers.rs` helpers take `&Frame<'a>` and return `&'a`/`&'a mut`
+      (`arg`/`ret`/`s32_arg`/`u64_arg`/`u64_ret`/`i32_ret`); no `'static`.
+- [x] dtype checks stay in the accessors (misuse is an error, not UB).
+- [x] Synthetic-frame test updated to go through `Frame`/`Buffer`.
+- [x] `call_frame.rs` no longer carries a lint allow (all unsafe blocks have
+      `// SAFETY:` docs); budget lowered 222 → 89.
 
-- [ ] Add a `Frame<'a>` newtype in `call_frame.rs` that borrows the frame for the
-      handler duration:
-      `pub struct Frame<'a> { raw: *mut XLA_FFI_CallFrame, _marker: PhantomData<&'a ...> }`,
-      constructed once per handler from the raw pointer.
-- [ ] Move decode onto `Frame<'a>`:
-      - `Frame::arg_buffer(i) -> Result<Buffer<'a>>`
-      - `Frame::ret_buffer(i) -> Result<BufferMut<'a>>`
-      - `Buffer<'a>` methods: `dims() -> &'a [i64]`, `element_count()`,
-        `as_f64() -> &'a [f64]`, `as_i32()`, `as_u64()`, `as_c128()`, …
-      - `BufferMut<'a>`: `as_f64_mut() -> &'a mut [f64]`, etc.
-- [ ] Make `Buffer<'a>` own the dtype/rank validation (checked at construction):
-      no `unsafe` slice construction outside `Buffer`.
-- [ ] Replace `handlers.rs` `arg<T>(frame, i) -> &'static [T]` with
-      `frame.arg::<T>(i) -> Result<&'a [T], ErrorInfo>` where `'a` is the frame
-      borrow. Add `T::read(buf)`/`T::write(buf)` on `Scalar` for F64/C128.
-- [ ] Keep the `dtype` check inside the accessor so misuse is an error, not UB.
-- [ ] Update the synthetic-frame tests to go through `Frame`.
-
-Exit criteria: no helper returns a pointer-derived slice with an unbound
-lifetime; `grep -rn "&'static" crates/klujax-ffi/src` is empty; tests green.
+Exit criteria: `grep -rn "&'static" crates/klujax-ffi/src` empty ✓; no unbounded
+pointer lifetimes ✓; clippy (lints denied) + tests green ✓. **Met.**
 
 ---
 
@@ -317,4 +317,5 @@ unchanged after every stage.
 
 | Date | Change |
 |---|---|
-| 2026-03-21 | Stage 0 (complete): `tools/unsafe_budget.{sh,txt}` (code-only count, baseline **222**); workspace lints `unsafe_op_in_unsafe_fn`, `undocumented_unsafe_blocks`, `missing_safety_doc` = `deny` with a documented per-module ratchet; `just unsafe-budget`/`miri` + pre-commit + CI wiring. All gates green (clippy, fmt, 4 rust test bins, 130 pytest, ffi smoke, static link). |
+| 2026-03-21 | Stage 1 (complete): added `Frame<'a>`/`Buffer<'a>`/`BufferMut<'a>` (lifetime-safe decode, documented `unsafe`, `call_frame.rs` allow removed); rewrote `handlers.rs` onto the new API + a `handler!` macro; no `&'static`/unbounded slices remain. Unsafe **222 → 89**; budget lowered. All gates green. |
+| 2026-03-21 | Stage 0 (complete): `tools/unsafe_budget.{sh,txt}` (code-only count, baseline **222**); workspace lints `unsafe_op_in_unsafe_fn`, `undocumented_unsafe_blocks`, `missing_safety_doc` = `deny` with a documented per-module ratchet; `just unsafe-budget`/`miri` + pre-commit + CI wiring. All gates green. |

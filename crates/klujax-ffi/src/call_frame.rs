@@ -1,165 +1,243 @@
-//! Helpers to decode an [`XLA_FFI_CallFrame`] into Rust slices.
+//! Borrowed, lifetime-safe decoding of an [`XLA_FFI_CallFrame`].
 //!
-//! The C++ binding DSL does this implicitly; hand-rolling it requires matching
-//! the argument/result ordering used by `jax.ffi.ffi_call`.
-
-// TODO(hardening/stage-1): the `Buffer<'a>` wrappers will document/remove the
-// remaining raw-pointer work; remove this allow then.
-#![allow(clippy::undocumented_unsafe_blocks)]
+//! The C++ binding DSL does this implicitly; hand-rolling it means building
+//! slices from raw pointers. To keep that contained, all pointer work lives
+//! here behind [`Frame`]/[`Buffer`]/[`BufferMut`], and every decoded slice is
+//! tied to the frame's lifetime `'a` so it cannot outlive the handler call.
 
 use crate::error::ErrorInfo;
 use crate::xla_ffi::{
     XLA_FFI_Buffer, XLA_FFI_CallFrame, XLA_FFI_ARG_TYPE_BUFFER, XLA_FFI_RET_TYPE_BUFFER,
 };
-use core::ffi::c_int;
+use core::ffi::{c_int, c_void};
+use core::marker::PhantomData;
 use core::slice;
 
-/// Return the argument buffer at index `i`.
+/// A borrowed view of the XLA call frame.
 ///
-/// # Safety
-///
-/// `frame` must be a valid call frame from XLA.
-pub unsafe fn arg_buffer(
-    frame: *mut XLA_FFI_CallFrame,
-    i: usize,
-) -> Result<*const XLA_FFI_Buffer, ErrorInfo> {
-    let args = unsafe { &(*frame).args };
-    if args.args.is_null() || (i as i64) >= args.size {
-        return Err(ErrorInfo::invalid(format!("missing argument {i}")));
-    }
-    if !args.types.is_null() && unsafe { *args.types.add(i) } != XLA_FFI_ARG_TYPE_BUFFER {
-        return Err(ErrorInfo::invalid(format!("argument {i} is not a buffer")));
-    }
-    let ptr = unsafe { *args.args.add(i) } as *const XLA_FFI_Buffer;
-    if ptr.is_null() {
-        return Err(ErrorInfo::invalid(format!("argument {i} is null")));
-    }
-    Ok(ptr)
+/// `'a` is the handler-invocation lifetime; buffers decoded from it borrow `'a`
+/// and therefore cannot escape the handler.
+pub struct Frame<'a> {
+    raw: *mut XLA_FFI_CallFrame,
+    _marker: PhantomData<&'a XLA_FFI_CallFrame>,
 }
 
-/// Return the result buffer at index `i`.
-///
-/// # Safety
-///
-/// `frame` must be a valid call frame from XLA.
-pub unsafe fn ret_buffer(
-    frame: *mut XLA_FFI_CallFrame,
-    i: usize,
-) -> Result<*mut XLA_FFI_Buffer, ErrorInfo> {
-    let rets = unsafe { &(*frame).rets };
-    if rets.rets.is_null() || (i as i64) >= rets.size {
-        return Err(ErrorInfo::invalid(format!("missing result {i}")));
+impl<'a> Frame<'a> {
+    /// Wrap the raw call frame.
+    ///
+    /// # Safety
+    ///
+    /// `raw` must be the valid, non-null call frame XLA passed to this handler,
+    /// and it must stay alive for the whole (short) `'a`.
+    pub unsafe fn from_raw(raw: *mut XLA_FFI_CallFrame) -> Self {
+        Self {
+            raw,
+            _marker: PhantomData,
+        }
     }
-    if !rets.types.is_null() && unsafe { *rets.types.add(i) } != XLA_FFI_RET_TYPE_BUFFER {
-        return Err(ErrorInfo::invalid(format!("result {i} is not a buffer")));
+
+    /// The raw pointer, for the error/panic machinery in [`crate::error`].
+    pub fn as_ptr(&self) -> *mut XLA_FFI_CallFrame {
+        self.raw
     }
-    let ptr = unsafe { *rets.rets.add(i) } as *mut XLA_FFI_Buffer;
-    if ptr.is_null() {
-        return Err(ErrorInfo::invalid(format!("result {i} is null")));
+
+    /// Decode argument buffer `i`.
+    ///
+    /// # Safety
+    ///
+    /// The [`Frame::from_raw`] contract must hold (it does inside handlers).
+    pub unsafe fn arg_buffer(&self, i: usize) -> Result<Buffer<'a>, ErrorInfo> {
+        // SAFETY: `self.raw` is valid per `Frame::from_raw`'s contract.
+        let args = unsafe { &(*self.raw).args };
+        if args.args.is_null() || (i as i64) >= args.size {
+            return Err(ErrorInfo::invalid(format!("missing argument {i}")));
+        }
+        // SAFETY: `args.types` has `args.size` entries and `i < size` (checked).
+        if !args.types.is_null() && unsafe { *args.types.add(i) } != XLA_FFI_ARG_TYPE_BUFFER {
+            return Err(ErrorInfo::invalid(format!("argument {i} is not a buffer")));
+        }
+        // SAFETY: `args.args` has `args.size` entries and `i < size` (checked).
+        let ptr = unsafe { *args.args.add(i) } as *const XLA_FFI_Buffer;
+        // SAFETY: `ptr` is the buffer XLA provided for argument `i`, valid for
+        // the call-frame lifetime.
+        unsafe { Buffer::from_ptr(ptr, "argument") }
     }
-    Ok(ptr)
+
+    /// Decode result buffer `i`.
+    ///
+    /// # Safety
+    ///
+    /// The [`Frame::from_raw`] contract must hold, and result buffers must be
+    /// uniquely owned for this invocation.
+    pub unsafe fn ret_buffer(&self, i: usize) -> Result<BufferMut<'a>, ErrorInfo> {
+        // SAFETY: `self.raw` is valid per `Frame::from_raw`'s contract.
+        let rets = unsafe { &(*self.raw).rets };
+        if rets.rets.is_null() || (i as i64) >= rets.size {
+            return Err(ErrorInfo::invalid(format!("missing result {i}")));
+        }
+        // SAFETY: `rets.types` has `rets.size` entries and `i < size` (checked).
+        if !rets.types.is_null() && unsafe { *rets.types.add(i) } != XLA_FFI_RET_TYPE_BUFFER {
+            return Err(ErrorInfo::invalid(format!("result {i} is not a buffer")));
+        }
+        // SAFETY: `rets.rets` has `rets.size` entries and `i < size` (checked).
+        let ptr = unsafe { *rets.rets.add(i) } as *mut XLA_FFI_Buffer;
+        // SAFETY: `ptr` is the result buffer XLA provided for slot `i`, valid
+        // for the call and uniquely owned by this invocation.
+        unsafe { BufferMut::from_ptr(ptr, "result") }
+    }
 }
 
-/// The dimensions of a buffer.
+/// Decode a raw XLA buffer pointer into its (validated) shape.
 ///
 /// # Safety
 ///
-/// `buf` must point to a valid [`XLA_FFI_Buffer`], and its `dims` array
-/// must have length `rank`.
-pub unsafe fn dims<'a>(buf: *const XLA_FFI_Buffer) -> &'a [i64] {
-    let buf = unsafe { &*buf };
-    if buf.dims.is_null() || buf.rank <= 0 {
+/// `ptr` must point to a valid, non-null [`XLA_FFI_Buffer`] whose `dims`/`data`
+/// remain valid for `'a` (i.e. for the call-frame lifetime).
+unsafe fn buffer_parts<'a>(
+    ptr: *const XLA_FFI_Buffer,
+    what: &str,
+) -> Result<(c_int, &'a [i64], *mut c_void), ErrorInfo> {
+    if ptr.is_null() {
+        return Err(ErrorInfo::invalid(format!("{what} is null")));
+    }
+    // SAFETY: `ptr` is non-null (checked) and valid per this fn's contract.
+    let b = unsafe { &*ptr };
+    let dims: &'a [i64] = if b.dims.is_null() || b.rank <= 0 {
         &[]
     } else {
-        unsafe { slice::from_raw_parts(buf.dims, buf.rank as usize) }
-    }
-}
-
-/// Number of elements in a buffer.
-///
-/// # Safety
-///
-/// See [`dims`].
-pub unsafe fn element_count(buf: *const XLA_FFI_Buffer) -> usize {
-    unsafe { dims(buf) }.iter().map(|&d| d as usize).product()
-}
-
-/// Check that `buf` has dtype `expected`.
-///
-/// # Safety
-///
-/// See [`dims`].
-pub unsafe fn expect_dtype(
-    buf: *const XLA_FFI_Buffer,
-    expected: c_int,
-    what: &str,
-) -> Result<(), ErrorInfo> {
-    let got = unsafe { (*buf).dtype };
-    if got != expected {
+        // SAFETY: for a valid buffer, `b.dims` has `b.rank` entries.
+        unsafe { slice::from_raw_parts(b.dims, b.rank as usize) }
+    };
+    if dims.iter().any(|&d| d < 0) {
         return Err(ErrorInfo::invalid(format!(
-            "{what}: unexpected dtype {got}, expected {expected}"
+            "{what} has a negative dimension"
         )));
     }
-    Ok(())
+    Ok((b.dtype, dims, b.data))
 }
 
-/// Read-only view over a buffer's `f64` data.
-///
-/// # Safety
-///
-/// `buf` must have dtype `F64` and at least [`element_count`] elements.
-pub unsafe fn as_f64<'a>(buf: *const XLA_FFI_Buffer) -> &'a [f64] {
-    let n = unsafe { element_count(buf) };
-    let data = unsafe { (*buf).data } as *const f64;
-    if data.is_null() || n == 0 {
-        &[]
-    } else {
-        unsafe { slice::from_raw_parts(data, n) }
+/// A read-only view of an XLA argument buffer.
+pub struct Buffer<'a> {
+    dtype: c_int,
+    dims: &'a [i64],
+    data: *const c_void,
+    _marker: PhantomData<&'a [u8]>,
+}
+
+impl<'a> Buffer<'a> {
+    /// # Safety
+    /// See [`buffer_parts`].
+    unsafe fn from_ptr(ptr: *const XLA_FFI_Buffer, what: &str) -> Result<Self, ErrorInfo> {
+        // SAFETY: the caller upholds `buffer_parts`' contract (see `# Safety`).
+        let (dtype, dims, data) = unsafe { buffer_parts(ptr, what)? };
+        Ok(Self {
+            dtype,
+            dims,
+            data: data as *const c_void,
+            _marker: PhantomData,
+        })
+    }
+
+    /// The XLA dtype.
+    pub fn dtype(&self) -> c_int {
+        self.dtype
+    }
+
+    /// The buffer shape (borrowed from the call frame).
+    pub fn dims(&self) -> &'a [i64] {
+        self.dims
+    }
+
+    /// Number of elements.
+    pub fn element_count(&self) -> usize {
+        self.dims.iter().map(|&d| d as usize).product()
+    }
+
+    /// Check the dtype, erroring with `what` for a clear message.
+    pub fn expect_dtype(&self, expected: c_int, what: &str) -> Result<(), ErrorInfo> {
+        if self.dtype != expected {
+            return Err(ErrorInfo::invalid(format!(
+                "{what}: unexpected dtype {}, expected {expected}",
+                self.dtype
+            )));
+        }
+        Ok(())
+    }
+
+    /// Reinterpret the data as `&[T]`.
+    ///
+    /// The caller is responsible for checking the dtype first
+    /// (see [`Buffer::expect_dtype`]).
+    pub fn as_slice<T: Copy>(&self) -> &'a [T] {
+        let n = self.element_count();
+        if self.data.is_null() || n == 0 {
+            return &[];
+        }
+        // SAFETY: `data` points to `n` contiguous elements of `dtype` (the XLA
+        // buffer invariant), and `'a` is bounded by the call-frame lifetime.
+        unsafe { slice::from_raw_parts(self.data as *const T, n) }
     }
 }
 
-/// Mutable view over a buffer's `f64` data.
-///
-/// # Safety
-///
-/// `buf` must have dtype `F64` and be uniquely owned by the caller.
-pub unsafe fn as_f64_mut<'a>(buf: *mut XLA_FFI_Buffer) -> &'a mut [f64] {
-    let n = unsafe { element_count(buf) };
-    let data = unsafe { (*buf).data } as *mut f64;
-    if data.is_null() || n == 0 {
-        &mut []
-    } else {
-        unsafe { slice::from_raw_parts_mut(data, n) }
-    }
+/// A write-only view of an XLA result buffer.
+pub struct BufferMut<'a> {
+    dtype: c_int,
+    dims: &'a [i64],
+    data: *mut c_void,
+    _marker: PhantomData<&'a mut [u8]>,
 }
 
-/// Read-only view over a buffer's `i32` data.
-///
-/// # Safety
-///
-/// `buf` must have dtype `S32`.
-pub unsafe fn as_i32<'a>(buf: *const XLA_FFI_Buffer) -> &'a [i32] {
-    let n = unsafe { element_count(buf) };
-    let data = unsafe { (*buf).data } as *const i32;
-    if data.is_null() || n == 0 {
-        &[]
-    } else {
-        unsafe { slice::from_raw_parts(data, n) }
+impl<'a> BufferMut<'a> {
+    /// # Safety
+    /// See [`buffer_parts`]; additionally the buffer must be uniquely owned.
+    unsafe fn from_ptr(ptr: *mut XLA_FFI_Buffer, what: &str) -> Result<Self, ErrorInfo> {
+        // SAFETY: the caller upholds `buffer_parts`' contract (see `# Safety`).
+        let (dtype, dims, data) = unsafe { buffer_parts(ptr as *const XLA_FFI_Buffer, what)? };
+        Ok(Self {
+            dtype,
+            dims,
+            data,
+            _marker: PhantomData,
+        })
     }
-}
 
-/// Read-only view over a buffer's `u64` data.
-///
-/// # Safety
-///
-/// `buf` must have dtype `U64`.
-pub unsafe fn as_u64<'a>(buf: *const XLA_FFI_Buffer) -> &'a [u64] {
-    let n = unsafe { element_count(buf) };
-    let data = unsafe { (*buf).data } as *const u64;
-    if data.is_null() || n == 0 {
-        &[]
-    } else {
-        unsafe { slice::from_raw_parts(data, n) }
+    /// The XLA dtype.
+    pub fn dtype(&self) -> c_int {
+        self.dtype
+    }
+
+    /// The buffer shape.
+    pub fn dims(&self) -> &'a [i64] {
+        self.dims
+    }
+
+    /// Number of elements.
+    pub fn element_count(&self) -> usize {
+        self.dims.iter().map(|&d| d as usize).product()
+    }
+
+    /// Check the dtype.
+    pub fn expect_dtype(&self, expected: c_int, what: &str) -> Result<(), ErrorInfo> {
+        if self.dtype != expected {
+            return Err(ErrorInfo::invalid(format!(
+                "{what}: unexpected dtype {}, expected {expected}",
+                self.dtype
+            )));
+        }
+        Ok(())
+    }
+
+    /// Reinterpret the data as `&mut [T]`.
+    ///
+    /// The caller is responsible for checking the dtype first.
+    pub fn as_slice_mut<T: Copy>(&mut self) -> &'a mut [T] {
+        let n = self.element_count();
+        if self.data.is_null() || n == 0 {
+            return &mut [];
+        }
+        // SAFETY: as `Buffer::as_slice`, plus unique ownership of the result
+        // buffer for this invocation.
+        unsafe { slice::from_raw_parts_mut(self.data as *mut T, n) }
     }
 }
 
@@ -167,7 +245,6 @@ pub unsafe fn as_u64<'a>(buf: *const XLA_FFI_Buffer) -> &'a [u64] {
 mod tests {
     use super::*;
     use crate::xla_ffi::{dtype, XLA_FFI_Args, XLA_FFI_Attrs, XLA_FFI_Rets, XLA_FFI_STAGE_EXECUTE};
-    use core::ffi::c_void;
     use core::mem::size_of;
     use core::ptr::null_mut;
 
@@ -221,7 +298,7 @@ mod tests {
         args.types = types.as_mut_ptr();
         args.args = arg_ptrs.as_mut_ptr();
 
-        let mut frame = XLA_FFI_CallFrame {
+        let mut raw_frame = XLA_FFI_CallFrame {
             struct_size: size_of::<XLA_FFI_CallFrame>(),
             extension_start: null_mut(),
             api: core::ptr::null(),
@@ -233,13 +310,20 @@ mod tests {
             future: null_mut(),
         };
 
+        // SAFETY: `raw_frame` is a fully-initialised call frame that outlives
+        // `frame` (a local).
+        let frame = unsafe { Frame::from_raw(&mut raw_frame) };
+        // SAFETY: the frame references a valid single-argument buffer.
         unsafe {
-            let b = arg_buffer(&mut frame, 0).unwrap();
-            assert_eq!(dims(b), &[3]);
-            assert_eq!(element_count(b), 3);
-            assert_eq!(as_i32(b), &[1, 2, 3]);
-            assert!(arg_buffer(&mut frame, 1).is_err());
-            assert!(ret_buffer(&mut frame, 0).is_err());
+            let b = frame.arg_buffer(0).unwrap();
+            assert_eq!(b.dims(), &[3]);
+            assert_eq!(b.element_count(), 3);
+            assert_eq!(b.dtype(), dtype::S32);
+            assert_eq!(b.as_slice::<i32>(), &[1, 2, 3]);
+            assert!(b.expect_dtype(dtype::S32, "arg").is_ok());
+            assert!(b.expect_dtype(dtype::F64, "arg").is_err());
+            assert!(frame.arg_buffer(1).is_err());
+            assert!(frame.ret_buffer(0).is_err());
         }
     }
 }

@@ -69,6 +69,7 @@ pythonpath = ["."]
 testpaths = ["tests.py", "tests_characterization"]
 
 [tool.ruff]
+extend-exclude = ["vendor"]
 fix = true
 target-version = "py311"
 
@@ -101,6 +102,7 @@ select = ["ALL"]
 ".github/run_tests.py" = ["INP", "PTH", "T201", "S603", "S607"]
 "benchmark.py" = ["INP001", "T201"]
 "klujax_native/__init__.py" = [
+  "ANN",
   "BLE001",
   "D",
   "PLC0415",
