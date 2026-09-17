@@ -573,6 +573,9 @@ C++ extension is removed.
       (`...-cp312-cp312-macosx_11_0_arm64.whl`) and bundles
       `klujax_native/libklujax_ffi.{dylib,so,dll}`; the sdist ships no prebuilt
       native lib and builds a wheel from a clean extraction with only `cargo`.
+      A fresh-venv install of the wheel solves correctly
+      (`solve([2,4],[10,20]) = [5,5]`), loading the bundled cdylib from
+      site-packages.
 - [ ] CI (workflow rewritten in `.github/workflows/test.yml`; awaiting a green
       run on GitHub):
       - [ ] matrix: Linux/macOS/Windows × Python 3.11–3.14.
@@ -667,6 +670,7 @@ otool -L target/release/libklujax_ffi.dylib | grep -i suitesparse && echo LEAK
 
 | Date (UTC) | Change |
 |---|---|
+| 2026-03-21 | Stage 6 (wheel install verified): fresh-venv install of the built wheel loads the bundled cdylib from site-packages and solves correctly. `CargoBuildExt` now also copies the cdylib into the wheel build dir so the sdist `exclude` does not strip it. |
 | 2026-03-21 | Stage 6 (packaging verified): wheel is platform-tagged and bundles the cdylib; sdist vendors the needed SuiteSparse sources and builds a wheel from a clean extraction (only `cargo`). Added `exclude klujax_native/*.{so,dylib,dll}` to MANIFEST and `BinaryDistribution` to force a non-`any` wheel. |
 | 2026-03-21 | Stage 6 (docs): updated `docs/advanced/jax-integration.md`, `memory-management.md`, `api/analyze.md`, `api/free.md`, `test-matrix.md` from C++/pure-Rust wording to Rust + native handles. |
 | 2026-03-21 | Stage 6 (CI): rewrote `.github/workflows/test.yml` with a Linux/macOS/Windows × Python 3.11–3.14 matrix (submodules, Rust toolchain, cargo test, pytest, static-link check, ffi smoke); updated `main.yml` wheel build for submodules + Rust. YAML valid; CI run still pending. |

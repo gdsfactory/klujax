@@ -43,9 +43,20 @@ class CargoBuildExt(build_ext):
         if not built.exists():
             msg = f"expected cargo artifact not found: {built}"
             raise FileNotFoundError(msg)
+
+        # Copy next to the source (for editable installs / `pythonpath = .`).
         dest_dir = ROOT / "klujax_native"
         dest_dir.mkdir(exist_ok=True)
         shutil.copy2(built, dest_dir / _rust_lib_name())
+
+        # Also place it in the wheel build tree directly. `MANIFEST.in` excludes
+        # the prebuilt library from the sdist, which would otherwise also drop
+        # it from `build_py`'s package-data copy.
+        if self.build_lib:
+            pkg = Path(self.build_lib) / "klujax_native"
+            pkg.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(built, pkg / _rust_lib_name())
+
         super().run()
 
 
