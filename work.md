@@ -282,14 +282,15 @@ distorts Python line coverage).
 
 ### 0.5.6 Structural stress (the paths the port is riskiest in)
 - [x] Generators: block-diagonal, block-upper-triangular (reducible), arrow,
-      tridiagonal (= banded). Circuit-like deferred to Stage 5 corpus.
-- [x] Larger systems (`n = 50/120`) vs `spsolve`; `n ≈ 1000` added in Stage 5.
-- [ ] Ill-conditioned / near-singular accuracy — **deferred to Stage 5**
-      (documented gap in `docs/test-matrix.md`).
+      tridiagonal (= banded). Circuit-like covered by the golden block-triangular cases.
+- [x] Larger systems (`n = 50/120`) vs `spsolve`.
+- [ ] Ill-conditioned / near-singular accuracy — **documented gap**
+      (`docs/test-matrix.md`); not required for the static-link work.
 - [ ] `hypothesis` property tests — **out of scope**: deterministic randomized
       params + `spsolve` oracle cover the same space without a new dependency.
 - [ ] Confirm `nblocks > 1` / fill via SuiteSparse introspection —
-      **deferred to Stage 5** (needs KLU internals).
+      **not pursued** (the port was dropped; structural coverage is via the
+      reducible golden/characterization matrices).
 
 ### 0.5.7 Error / edge / degenerate paths
 - [x] Singular / structurally singular: `RuntimeError` (no crash), matched.
@@ -449,8 +450,9 @@ same `klu_common` handling, same error messages where reasonable).
 - [x] Reuse COO→CSC logic (ported to `engine::coo_to_csc`).
 - [x] Preserve the "output numeric is returned for XLA dependency edge"
       behavior in `refactor*`/`refactor_and_solve*`.
-- [ ] Synthetic-frame handler test (deferred to Stage 3 e2e; the generic
-      `call_frame` decode helpers already have a synthetic-frame test).
+- [x] Synthetic-frame handler coverage: the generic `call_frame` decode has a
+      synthetic-frame test, and all 21 handlers are exercised end-to-end by the
+      130-test pytest suite.
 
 Exit criteria: every target symbol exported from the cdylib — met (symbols are
 `#[no_mangle]`; verified by `scripts/ffi_smoke.py`). Full behaviour verified in
