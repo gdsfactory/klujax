@@ -47,6 +47,58 @@ pub unsafe trait Scalar: Copy + 'static {
     fn f64_ptr(s: &mut [Self]) -> *mut f64;
     /// Const raw pointer to the slice (reinterpreted as `f64`).
     fn f64_ptr_const(s: &[Self]) -> *const f64;
+
+    /// KLU numeric factorization (`klu_factor` / `klu_z_factor`).
+    ///
+    /// # Safety
+    /// `bp`/`bi`/`bx` must describe a valid CSC matrix, `sym` a valid symbolic
+    /// handle and `common` a valid `klu_common`.
+    unsafe fn lu_factor(
+        bp: &mut [i32],
+        bi: &mut [i32],
+        bx: &mut [Self],
+        sym: *mut klu_symbolic,
+        common: *mut klu_common,
+    ) -> *mut klu_numeric;
+
+    /// KLU refactorization (`klu_refactor` / `klu_z_refactor`).
+    ///
+    /// # Safety
+    /// As [`Scalar::lu_factor`]; `num` must be a valid numeric handle.
+    unsafe fn lu_refactor(
+        bp: &mut [i32],
+        bi: &mut [i32],
+        bx: &mut [Self],
+        sym: *mut klu_symbolic,
+        num: *mut klu_numeric,
+        common: *mut klu_common,
+    ) -> c_int;
+
+    /// KLU solve (`klu_solve` / `klu_z_solve`).
+    ///
+    /// # Safety
+    /// `sym`/`num` must be matching valid handles and `b` a valid RHS buffer.
+    unsafe fn lu_solve(
+        sym: *mut klu_symbolic,
+        num: *mut klu_numeric,
+        n_col: usize,
+        n_rhs: usize,
+        b: &mut [Self],
+        common: *mut klu_common,
+    ) -> c_int;
+
+    /// KLU plain-transpose solve (`klu_tsolve` / `klu_z_tsolve`).
+    ///
+    /// # Safety
+    /// As [`Scalar::lu_solve`].
+    unsafe fn lu_tsolve(
+        sym: *mut klu_symbolic,
+        num: *mut klu_numeric,
+        n_col: usize,
+        n_rhs: usize,
+        b: &mut [Self],
+        common: *mut klu_common,
+    ) -> c_int;
 }
 
 unsafe impl Scalar for f64 {
@@ -66,6 +118,81 @@ unsafe impl Scalar for f64 {
     }
     fn f64_ptr_const(s: &[Self]) -> *const f64 {
         s.as_ptr()
+    }
+
+    unsafe fn lu_factor(
+        bp: &mut [i32],
+        bi: &mut [i32],
+        bx: &mut [Self],
+        sym: *mut klu_symbolic,
+        common: *mut klu_common,
+    ) -> *mut klu_numeric {
+        unsafe {
+            klu_factor(
+                bp.as_mut_ptr(),
+                bi.as_mut_ptr(),
+                Self::f64_ptr(bx),
+                sym,
+                common,
+            )
+        }
+    }
+    unsafe fn lu_refactor(
+        bp: &mut [i32],
+        bi: &mut [i32],
+        bx: &mut [Self],
+        sym: *mut klu_symbolic,
+        num: *mut klu_numeric,
+        common: *mut klu_common,
+    ) -> c_int {
+        unsafe {
+            klu_refactor(
+                bp.as_mut_ptr(),
+                bi.as_mut_ptr(),
+                Self::f64_ptr(bx),
+                sym,
+                num,
+                common,
+            )
+        }
+    }
+    unsafe fn lu_solve(
+        sym: *mut klu_symbolic,
+        num: *mut klu_numeric,
+        n_col: usize,
+        n_rhs: usize,
+        b: &mut [Self],
+        common: *mut klu_common,
+    ) -> c_int {
+        unsafe {
+            klu_solve(
+                sym,
+                num,
+                n_col as c_int,
+                n_rhs as c_int,
+                Self::f64_ptr(b),
+                common,
+            )
+        }
+    }
+    unsafe fn lu_tsolve(
+        sym: *mut klu_symbolic,
+        num: *mut klu_numeric,
+        n_col: usize,
+        n_rhs: usize,
+        b: &mut [Self],
+        common: *mut klu_common,
+    ) -> c_int {
+        unsafe {
+            klu_tsolve(
+                sym,
+                num,
+                n_col as c_int,
+                n_rhs as c_int,
+                Self::f64_ptr(b),
+                common,
+            )
+        }
     }
 }
 
@@ -93,6 +220,83 @@ unsafe impl Scalar for C64 {
     fn f64_ptr_const(s: &[Self]) -> *const f64 {
         s.as_ptr() as *const f64
     }
+
+    unsafe fn lu_factor(
+        bp: &mut [i32],
+        bi: &mut [i32],
+        bx: &mut [Self],
+        sym: *mut klu_symbolic,
+        common: *mut klu_common,
+    ) -> *mut klu_numeric {
+        unsafe {
+            klu_z_factor(
+                bp.as_mut_ptr(),
+                bi.as_mut_ptr(),
+                Self::f64_ptr(bx),
+                sym,
+                common,
+            )
+        }
+    }
+    unsafe fn lu_refactor(
+        bp: &mut [i32],
+        bi: &mut [i32],
+        bx: &mut [Self],
+        sym: *mut klu_symbolic,
+        num: *mut klu_numeric,
+        common: *mut klu_common,
+    ) -> c_int {
+        unsafe {
+            klu_z_refactor(
+                bp.as_mut_ptr(),
+                bi.as_mut_ptr(),
+                Self::f64_ptr(bx),
+                sym,
+                num,
+                common,
+            )
+        }
+    }
+    unsafe fn lu_solve(
+        sym: *mut klu_symbolic,
+        num: *mut klu_numeric,
+        n_col: usize,
+        n_rhs: usize,
+        b: &mut [Self],
+        common: *mut klu_common,
+    ) -> c_int {
+        unsafe {
+            klu_z_solve(
+                sym,
+                num,
+                n_col as c_int,
+                n_rhs as c_int,
+                Self::f64_ptr(b),
+                common,
+            )
+        }
+    }
+    unsafe fn lu_tsolve(
+        sym: *mut klu_symbolic,
+        num: *mut klu_numeric,
+        n_col: usize,
+        n_rhs: usize,
+        b: &mut [Self],
+        common: *mut klu_common,
+    ) -> c_int {
+        // conj_solve = 0 -> plain transpose A^T (matches the C++ wrapper).
+        unsafe {
+            klu_z_tsolve(
+                sym,
+                num,
+                n_col as c_int,
+                n_rhs as c_int,
+                Self::f64_ptr(b),
+                0,
+                common,
+            )
+        }
+    }
 }
 
 fn new_common() -> klu_common {
@@ -101,6 +305,34 @@ fn new_common() -> klu_common {
         klu_defaults(common.as_mut_ptr());
         common.assume_init()
     }
+}
+
+/// Row-major `(n_lhs, n_col, n_rhs)` -> column-major `(n_lhs, n_rhs, n_col)`.
+///
+/// KLU expects column-major right-hand sides.
+fn to_col_major<T: Scalar>(b: &[T], n_lhs: usize, n_col: usize, n_rhs: usize) -> Vec<T> {
+    let mut out = vec![T::zero(); n_lhs * n_col * n_rhs];
+    for m in 0..n_lhs {
+        for n in 0..n_col {
+            for p in 0..n_rhs {
+                out[m * n_rhs * n_col + p * n_col + n] = b[m * n_col * n_rhs + n * n_rhs + p];
+            }
+        }
+    }
+    out
+}
+
+/// Column-major `(n_lhs, n_rhs, n_col)` -> row-major `(n_lhs, n_col, n_rhs)`.
+fn to_row_major<T: Scalar>(x: &[T], n_lhs: usize, n_col: usize, n_rhs: usize) -> Vec<T> {
+    let mut out = vec![T::zero(); n_lhs * n_col * n_rhs];
+    for m in 0..n_lhs {
+        for n in 0..n_col {
+            for p in 0..n_rhs {
+                out[m * n_col * n_rhs + n * n_rhs + p] = x[m * n_rhs * n_col + p * n_col + n];
+            }
+        }
+    }
+    out
 }
 
 /// COO -> CSC conversion info (rows sorted within each column).
@@ -176,135 +408,10 @@ pub fn validate(
     Ok(())
 }
 
-unsafe fn factor_t<T: Scalar>(
-    bp: &mut [i32],
-    bi: &mut [i32],
-    bx: &mut [T],
-    sym: *mut klu_symbolic,
-    common: *mut klu_common,
-) -> *mut klu_numeric {
-    if T::IS_COMPLEX {
-        unsafe {
-            klu_z_factor(
-                bp.as_mut_ptr(),
-                bi.as_mut_ptr(),
-                T::f64_ptr(bx),
-                sym,
-                common,
-            )
-        }
-    } else {
-        unsafe {
-            klu_factor(
-                bp.as_mut_ptr(),
-                bi.as_mut_ptr(),
-                T::f64_ptr(bx),
-                sym,
-                common,
-            )
-        }
-    }
-}
-
-unsafe fn refactor_t<T: Scalar>(
-    bp: &mut [i32],
-    bi: &mut [i32],
-    bx: &mut [T],
-    sym: *mut klu_symbolic,
-    num: *mut klu_numeric,
-    common: *mut klu_common,
-) -> c_int {
-    if T::IS_COMPLEX {
-        unsafe {
-            klu_z_refactor(
-                bp.as_mut_ptr(),
-                bi.as_mut_ptr(),
-                T::f64_ptr(bx),
-                sym,
-                num,
-                common,
-            )
-        }
-    } else {
-        unsafe {
-            klu_refactor(
-                bp.as_mut_ptr(),
-                bi.as_mut_ptr(),
-                T::f64_ptr(bx),
-                sym,
-                num,
-                common,
-            )
-        }
-    }
-}
-
-unsafe fn solve_t<T: Scalar>(
-    sym: *mut klu_symbolic,
-    num: *mut klu_numeric,
-    n_col: usize,
-    n_rhs: usize,
-    b: &mut [T],
-    common: *mut klu_common,
-) -> c_int {
-    if T::IS_COMPLEX {
-        unsafe {
-            klu_z_solve(
-                sym,
-                num,
-                n_col as c_int,
-                n_rhs as c_int,
-                T::f64_ptr(b),
-                common,
-            )
-        }
-    } else {
-        unsafe {
-            klu_solve(
-                sym,
-                num,
-                n_col as c_int,
-                n_rhs as c_int,
-                T::f64_ptr(b),
-                common,
-            )
-        }
-    }
-}
-
-unsafe fn tsolve_t<T: Scalar>(
-    sym: *mut klu_symbolic,
-    num: *mut klu_numeric,
-    n_col: usize,
-    n_rhs: usize,
-    b: &mut [T],
-    common: *mut klu_common,
-) -> c_int {
-    if T::IS_COMPLEX {
-        // conj_solve = 0 -> plain transpose A^T (matches the C++ wrapper).
-        unsafe {
-            klu_z_tsolve(
-                sym,
-                num,
-                n_col as c_int,
-                n_rhs as c_int,
-                T::f64_ptr(b),
-                0,
-                common,
-            )
-        }
-    } else {
-        unsafe {
-            klu_tsolve(
-                sym,
-                num,
-                n_col as c_int,
-                n_rhs as c_int,
-                T::f64_ptr(b),
-                common,
-            )
-        }
-    }
+/// Gather the CSC-ordered values of `ax` for left-hand side `i`.
+fn gather_ax<T: Scalar>(ax: &[T], bk: &[i32], i: usize, n_nz: usize) -> Vec<T> {
+    let m = i * n_nz;
+    (0..n_nz).map(|k| ax[m + bk[k] as usize]).collect()
 }
 
 /// Symbolic analysis; returns the raw `klu_symbolic*` as `u64`.
@@ -339,7 +446,7 @@ pub fn factor_raw<T: Scalar>(ai: &[i32], aj: &[i32], ax: &[T], sym: u64) -> Resu
     let (mut bi, mut bp, bk) = coo_to_csc(n_col, n_nz, ai, aj);
     let mut bx: Vec<T> = bk.iter().map(|&k| ax[k as usize]).collect();
     let mut common = new_common();
-    let num = unsafe { factor_t(&mut bp, &mut bi, &mut bx, root, &mut common) };
+    let num = unsafe { T::lu_factor(&mut bp, &mut bi, &mut bx, root, &mut common) };
     if num.is_null() || common.status < KLU_OK {
         return Err(ErrorInfo::invalid(
             "klu_factor/z_factor failed (singular matrix?)",
@@ -367,9 +474,8 @@ pub fn factor_batch_raw<T: Scalar>(
     let mut common = new_common();
     let mut out = Vec::with_capacity(n_lhs);
     for i in 0..n_lhs {
-        let m = i * n_nz;
-        let mut bx: Vec<T> = (0..n_nz).map(|k| ax[m + bk[k] as usize]).collect();
-        let num = unsafe { factor_t(&mut bp, &mut bi, &mut bx, root, &mut common) };
+        let mut bx = gather_ax(ax, &bk, i, n_nz);
+        let num = unsafe { T::lu_factor(&mut bp, &mut bi, &mut bx, root, &mut common) };
         if num.is_null() || common.status < KLU_OK {
             for addr in out.drain(..) {
                 let mut p = addr as *mut klu_numeric;
@@ -412,10 +518,9 @@ pub fn refactor_batch_raw<T: Scalar>(
         if addr == 0 {
             return Err(ErrorInfo::invalid("numeric pointer is null"));
         }
-        let m = i * n_nz;
-        let mut bx: Vec<T> = (0..n_nz).map(|k| ax[m + bk[k] as usize]).collect();
+        let mut bx = gather_ax(ax, &bk, i, n_nz);
         let status = unsafe {
-            refactor_t(
+            T::lu_refactor(
                 &mut bp,
                 &mut bi,
                 &mut bx,
@@ -451,14 +556,7 @@ fn solve_with_symbol_impl<T: Scalar>(
     let (mut bi, mut bp, bk) = coo_to_csc(n_col, n_nz, ai, aj);
 
     // b (n_lhs, n_col, n_rhs) row-major -> x_temp col-major.
-    let mut x_temp = vec![T::zero(); n_lhs * n_col * n_rhs];
-    for m in 0..n_lhs {
-        for n in 0..n_col {
-            for p in 0..n_rhs {
-                x_temp[m * n_rhs * n_col + p * n_col + n] = b[m * n_col * n_rhs + n * n_rhs + p];
-            }
-        }
-    }
+    let mut x_temp = to_col_major(b, n_lhs, n_col, n_rhs);
 
     let root = sym as *mut klu_symbolic;
     if root.is_null() {
@@ -467,9 +565,8 @@ fn solve_with_symbol_impl<T: Scalar>(
     let mut common = new_common();
 
     for i in 0..n_lhs {
-        let m = i * n_nz;
-        let mut bx: Vec<T> = (0..n_nz).map(|k| ax[m + bk[k] as usize]).collect();
-        let num = unsafe { factor_t(&mut bp, &mut bi, &mut bx, root, &mut common) };
+        let mut bx = gather_ax(ax, &bk, i, n_nz);
+        let num = unsafe { T::lu_factor(&mut bp, &mut bi, &mut bx, root, &mut common) };
         if num.is_null() || common.status < KLU_OK {
             return Err(ErrorInfo::invalid(
                 "klu_factor/z_factor failed (singular matrix?)",
@@ -478,7 +575,7 @@ fn solve_with_symbol_impl<T: Scalar>(
         let status = if transpose {
             let n = i * n_rhs * n_col;
             unsafe {
-                tsolve_t(
+                T::lu_tsolve(
                     root,
                     num,
                     n_col,
@@ -490,7 +587,7 @@ fn solve_with_symbol_impl<T: Scalar>(
         } else {
             let n = i * n_rhs * n_col;
             unsafe {
-                solve_t(
+                T::lu_solve(
                     root,
                     num,
                     n_col,
@@ -512,14 +609,7 @@ fn solve_with_symbol_impl<T: Scalar>(
     }
 
     // x_temp col-major -> x row-major.
-    let mut x = vec![T::zero(); n_lhs * n_col * n_rhs];
-    for m in 0..n_lhs {
-        for n in 0..n_col {
-            for p in 0..n_rhs {
-                x[m * n_col * n_rhs + n * n_rhs + p] = x_temp[m * n_rhs * n_col + p * n_col + n];
-            }
-        }
-    }
+    let x = to_row_major(&x_temp, n_lhs, n_col, n_rhs);
     Ok(x)
 }
 
@@ -537,14 +627,7 @@ pub fn solve_raw<T: Scalar>(
     let n_nz = ax.len() / n_lhs;
     validate(ai, aj, n_lhs, n_col, n_rhs, n_nz)?;
     let (mut bi, mut bp, bk) = coo_to_csc(n_col, n_nz, ai, aj);
-    let mut x_temp = vec![T::zero(); n_lhs * n_col * n_rhs];
-    for m in 0..n_lhs {
-        for n in 0..n_col {
-            for p in 0..n_rhs {
-                x_temp[m * n_rhs * n_col + p * n_col + n] = b[m * n_col * n_rhs + n * n_rhs + p];
-            }
-        }
-    }
+    let mut x_temp = to_col_major(b, n_lhs, n_col, n_rhs);
     let mut common = new_common();
     let root = unsafe {
         klu_analyze(
@@ -559,9 +642,8 @@ pub fn solve_raw<T: Scalar>(
     }
     let mut result = Ok(());
     for i in 0..n_lhs {
-        let m = i * n_nz;
-        let mut bx: Vec<T> = (0..n_nz).map(|k| ax[m + bk[k] as usize]).collect();
-        let num = unsafe { factor_t(&mut bp, &mut bi, &mut bx, root, &mut common) };
+        let mut bx = gather_ax(ax, &bk, i, n_nz);
+        let num = unsafe { T::lu_factor(&mut bp, &mut bi, &mut bx, root, &mut common) };
         if num.is_null() || common.status < KLU_OK {
             result = Err(ErrorInfo::invalid(
                 "klu_factor/z_factor failed (singular matrix?)",
@@ -570,7 +652,7 @@ pub fn solve_raw<T: Scalar>(
         }
         let n = i * n_rhs * n_col;
         let status = unsafe {
-            solve_t(
+            T::lu_solve(
                 root,
                 num,
                 n_col,
@@ -590,14 +672,7 @@ pub fn solve_raw<T: Scalar>(
     unsafe { klu_free_symbolic(&mut root, &mut common) };
     result?;
 
-    let mut x = vec![T::zero(); n_lhs * n_col * n_rhs];
-    for m in 0..n_lhs {
-        for n in 0..n_col {
-            for p in 0..n_rhs {
-                x[m * n_col * n_rhs + n * n_rhs + p] = x_temp[m * n_rhs * n_col + p * n_col + n];
-            }
-        }
-    }
+    let x = to_row_major(&x_temp, n_lhs, n_col, n_rhs);
     Ok(x)
 }
 
@@ -652,14 +727,7 @@ pub fn solve_with_numeric_raw<T: Scalar>(
     if !broadcast_numeric && numeric.len() != n_lhs {
         return Err(ErrorInfo::invalid("numeric and b batch size mismatch"));
     }
-    let mut x_temp = vec![T::zero(); n_lhs * n_col * n_rhs];
-    for m in 0..n_lhs {
-        for n in 0..n_col {
-            for p in 0..n_rhs {
-                x_temp[m * n_rhs * n_col + p * n_col + n] = b[m * n_col * n_rhs + n * n_rhs + p];
-            }
-        }
-    }
+    let mut x_temp = to_col_major(b, n_lhs, n_col, n_rhs);
     let mut common = new_common();
     for i in 0..n_lhs {
         let addr = if broadcast_numeric {
@@ -674,7 +742,7 @@ pub fn solve_with_numeric_raw<T: Scalar>(
         let n = i * n_rhs * n_col;
         let status = if transpose {
             unsafe {
-                tsolve_t(
+                T::lu_tsolve(
                     root,
                     num,
                     n_col,
@@ -685,7 +753,7 @@ pub fn solve_with_numeric_raw<T: Scalar>(
             }
         } else {
             unsafe {
-                solve_t(
+                T::lu_solve(
                     root,
                     num,
                     n_col,
@@ -703,14 +771,7 @@ pub fn solve_with_numeric_raw<T: Scalar>(
             }));
         }
     }
-    let mut x = vec![T::zero(); n_lhs * n_col * n_rhs];
-    for m in 0..n_lhs {
-        for n in 0..n_col {
-            for p in 0..n_rhs {
-                x[m * n_col * n_rhs + n * n_rhs + p] = x_temp[m * n_rhs * n_col + p * n_col + n];
-            }
-        }
-    }
+    let x = to_row_major(&x_temp, n_lhs, n_col, n_rhs);
     Ok(x)
 }
 
@@ -769,6 +830,18 @@ pub fn free_numeric_raw(numeric: &[u64]) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transpose_round_trip() {
+        let (n_lhs, n_col, n_rhs) = (2usize, 3usize, 4usize);
+        let b: Vec<f64> = (0..(n_lhs * n_col * n_rhs)).map(|i| i as f64).collect();
+        let cm = to_col_major(&b, n_lhs, n_col, n_rhs);
+        assert_eq!(b, to_row_major(&cm, n_lhs, n_col, n_rhs));
+
+        let bz: Vec<C64> = b.iter().map(|&x| C64 { re: x, im: -x }).collect();
+        let cmz = to_col_major(&bz, n_lhs, n_col, n_rhs);
+        assert_eq!(bz, to_row_major(&cmz, n_lhs, n_col, n_rhs));
+    }
 
     fn diagonal(n: usize) -> (Vec<i32>, Vec<i32>, Vec<f64>) {
         let ai: Vec<i32> = (0..n as i32).collect();

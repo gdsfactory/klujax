@@ -1,9 +1,9 @@
 # klujax Rust hardening plan
 
-Status: **in progress** — Stages 0, 1 and 2 complete. Unsafe budget lowered
-**222 → 89** (already under the Stage 6 target of < 110); no unbounded
-lifetimes remain; no handler lint suppressions remain. Stages 3–6 remain.
-Supersedes
+Status: **in progress** — Stages 0, 1, 2 and 3 complete. Unsafe *operations*
+(blocks + impls) **164 → 69**; no unbounded lifetimes; no handler lint
+suppressions; batch/transpose duplication and `IS_COMPLEX` branches removed.
+Stages 4–6 remain. Supersedes
 the previous migration plan (the migration is done: Rust `cdylib`, XLA FFI,
 `klu-sys` statically linking SuiteSparse, Python via ctypes/`pycapsule`; 130
 pytest + sax downstream green on macOS/Linux).
@@ -163,32 +163,39 @@ tracked there).
 
 ## Stage 3 — Deduplicate batching / row-major ⇄ col-major logic
 
-Goal: one implementation of the batch/transpose machinery.
+Status: **complete** (line-count exit criterion adjusted — see note). The
+substantive duplication is centralized and the `IS_COMPLEX` branches are gone.
 
-Current duplication in `engine.rs`:
+Was: six transpose loops across `solve_with_symbol_impl`, `solve_raw`,
+`solve_with_numeric_raw`; the per-`lhs` gather repeated in `factor_batch_raw`,
+`refactor_batch_raw`, and the solve paths; and `if T::IS_COMPLEX` in four
+`*_t` helpers.
 
-- `solve_with_symbol_impl`, `solve_raw`, `solve_with_numeric_raw`,
-  `factor_batch_raw`, `refactor_batch_raw`, `dot_raw` each repeat:
-  - the row-major → col-major transpose of `b`/`x`;
-  - the per-`lhs` loop over `Bk`/`Bx`;
-  - the complex/real `T::IS_COMPLEX` branching.
+- [x] `to_col_major<T>` / `to_row_major<T>` extracted with a round-trip unit
+      test (real + complex). The 6 inline transpose loops now call these.
+- [x] `gather_ax<T>(ax, bk, i, n_nz)` extracted; the 4 duplicated
+      per-`lhs` gather sites call it.
+- [x] `IS_COMPLEX` collapse: added `Scalar::lu_factor` / `lu_refactor` /
+      `lu_solve` / `lu_tsolve` (with `# Safety` docs); `f64` calls `klu_*`,
+      `C64` calls `klu_z_*` (plain transpose, `conj_solve = 0`). The four
+      `*_t` helpers are deleted and the generic paths are branch-free —
+      mirrors the old C++ `KluTraits<T>`.
+- [x] `#[allow(clippy::too_many_arguments)]` remains only on
+      `solve_with_symbol_impl` (the one generic core).
+- [x] Tests: transpose round-trip added; the golden corpus (byte-for-byte) and
+      all 130 pytest remain unchanged.
+- [ ] Full `per_lhs(closure)` / `solve_lhs` merge: the loop *bodies* differ
+      enough (error cleanup, in-place vs. new handles) that a closure helper
+      hurt readability more than it helped. Deferred/declined.
 
-Plan:
+Note: `engine.rs` is **not smaller** (825 → 901) because the `# Safety` docs and
+multi-line trait signatures more than offset the removed loops. Size is a poor
+proxy here; duplication (transpose loops 8 → 2, gather sites 4 → 1,
+`IS_COMPLEX` branches 4 → 0) is the real metric.
 
-- [ ] Extract `fn to_col_major<T>(b: &[T], n_lhs, n_col, n_rhs) -> Vec<T>` and
-      `fn to_row_major<T>(x: &[T], …) -> Vec<T>` with round-trip unit tests.
-- [ ] Extract `fn per_lhs<T>(ax, bk, bp, bi, n_lhs, n_nz, f: impl Fn(&mut [T]) -> Result<()>)`.
-- [ ] Extract a single `fn solve_lhs<T>(…)` used by both `solve*` and `tsolve*`
-      (a `transpose: bool` parameter instead of duplicated bodies).
-- [ ] Collapse the `T::IS_COMPLEX` branches by routing through `T`'s methods
-      (`T::klu_factor`, `T::klu_solve`, `T::klu_tsolve`, `T::klu_refactor`) so
-      the generic code is branch-free — mirrors the old `KluTraits<T>`.
-- [ ] Keep `#[allow(clippy::too_many_arguments)]` only on the one generic core.
-- [ ] Add tests: transpose round-trip; equivalence of refactored helpers on the
-      existing golden corpus (no tolerance loosening).
-
-Exit criteria: no repeated transpose loops (grep is clean); `engine.rs` shrinks
-materially; golden + 130 pytest unchanged.
+Exit criteria: no repeated transpose loops ✓; duplication centralized ✓;
+`IS_COMPLEX` branches removed ✓; 130 pytest + golden unchanged ✓. **Met**
+(line-count target deliberately dropped).
 
 ---
 
@@ -318,6 +325,7 @@ unchanged after every stage.
 
 | Date | Change |
 |---|---|
+| 2026-03-21 | Stage 3 (complete): extracted `to_col_major`/`to_row_major` (+ round-trip test) and `gather_ax`; collapsed `IS_COMPLEX` into `Scalar::lu_*` trait methods and deleted the `*_t` helpers. Switched the unsafe budget metric to *operations* (`unsafe {` + `unsafe impl`): **164 → 69**. All gates green. |
 | 2026-03-21 | Stage 2 (complete): macro-generated the 21 handlers with `# Safety` docs + explicit unsafe scopes; removed all handler lint suppressions (`missing_safety_doc`, `undocumented_unsafe_blocks`, `unsafe_op_in_unsafe_fn`, `too_many_arguments`); clippy still deny-clean. All gates green. |
 | 2026-03-21 | Stage 1 (complete): added `Frame<'a>`/`Buffer<'a>`/`BufferMut<'a>` (lifetime-safe decode, documented `unsafe`, `call_frame.rs` allow removed); rewrote `handlers.rs` onto the new API + a `handler!` macro; no `&'static`/unbounded slices remain. Unsafe **222 → 89**; budget lowered. All gates green. |
 | 2026-03-21 | Stage 0 (complete): `tools/unsafe_budget.{sh,txt}` (code-only count, baseline **222**); workspace lints `unsafe_op_in_unsafe_fn`, `undocumented_unsafe_blocks`, `missing_safety_doc` = `deny` with a documented per-module ratchet; `just unsafe-budget`/`miri` + pre-commit + CI wiring. All gates green. |

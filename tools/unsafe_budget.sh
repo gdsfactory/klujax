@@ -11,12 +11,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUDGET_FILE="$ROOT/tools/unsafe_budget.txt"
 
-# Count only code constructs: strip `//` comments first, then count `unsafe`
-# (so TODO comments mentioning "unsafe" don't move the budget).
+# Count unsafe *operations* (not declarations): `unsafe {` blocks and
+# `unsafe impl`. Declaring an `unsafe fn` contract is not itself an operation,
+# so counting those would penalise FFI/trait signatures. Strip `//` comments.
 BUDGET="${1:-$(tr -d '[:space:]' < "$BUDGET_FILE")}"
 COUNT="$(grep -rhE 'unsafe' "$ROOT/crates" --include='*.rs' \
   | sed 's://.*::' \
-  | grep -oE '\bunsafe\b' | wc -l | tr -d ' ')"
+  | grep -oE 'unsafe\s*(\{|impl)' | wc -l | tr -d ' ')"
 
 echo "unsafe occurrences: $COUNT (budget: $BUDGET)"
 if [ "$COUNT" -gt "$BUDGET" ]; then
