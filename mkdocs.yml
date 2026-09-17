@@ -38,6 +38,8 @@ nav:
       - JAX Integration: advanced/jax-integration.md
       - Memory Management: advanced/memory-management.md
       - Performance Guide: advanced/performance.md
+  - Development:
+      - Test Coverage Matrix: test-matrix.md
 
 markdown_extensions:
   - admonition
