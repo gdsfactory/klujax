@@ -1,9 +1,8 @@
 # klujax → Rust migration plan (non-PyO3)
 
-Status: in progress — Stages 0, 0.5, 1, 2, 3 complete; Milestone A (Stage 4,
-macOS) complete; Stage 5 static linking verified (cross-platform hardening
-remaining); Stage 6 packaging/CI/release remaining. See the status log at the
-end of this file.
+Status: in progress — Stages 0–4 complete; Stage 5 complete except
+cross-platform CI; Stage 6 packaging/docs/pre-commit done, CI run + release
+pending. See the status log at the end of this file.
 Owner: Floris
 Target: replace `klujax.cpp` (pybind11) with a Rust `klujax-ffi` cdylib that
 registers XLA typed-FFI handlers via `jax.ffi.pycapsule` and **statically links
@@ -671,6 +670,7 @@ otool -L target/release/libklujax_ffi.dylib | grep -i suitesparse && echo LEAK
 
 | Date (UTC) | Change |
 |---|---|
+| 2026-03-21 | Stage 6 (local gates green): `pre-commit run --all-files` passes (cargo fmt/clippy, ruff 0.15.7, ty, pretty-format-toml); `mkdocs build --strict` passes (added the test matrix to the nav). CI run + PyPI release remain (external). |
 | 2026-03-21 | Stage 6 (wheel install verified): fresh-venv install of the built wheel loads the bundled cdylib from site-packages and solves correctly. `CargoBuildExt` now also copies the cdylib into the wheel build dir so the sdist `exclude` does not strip it. |
 | 2026-03-21 | Stage 6 (packaging verified): wheel is platform-tagged and bundles the cdylib; sdist vendors the needed SuiteSparse sources and builds a wheel from a clean extraction (only `cargo`). Added `exclude klujax_native/*.{so,dylib,dll}` to MANIFEST and `BinaryDistribution` to force a non-`any` wheel. |
 | 2026-03-21 | Stage 6 (docs): updated `docs/advanced/jax-integration.md`, `memory-management.md`, `api/analyze.md`, `api/free.md`, `test-matrix.md` from C++/pure-Rust wording to Rust + native handles. |
