@@ -10,8 +10,9 @@
 //! such site carries a `// SAFETY:` comment (enforced by
 //! `clippy::undocumented_unsafe_blocks`):
 //!
-//! - [`klu`] — the KLU C FFI (`klu-sys`); the only module that calls into the
-//!   SuiteSparse library. Callers get `Result`-returning safe functions.
+//! - the external `klu` crate — the KLU C FFI (`klu-sys`); the only place that
+//!   calls into SuiteSparse. Callers get `Result`-returning safe functions
+//!   (`engine` reaches it through `klu::raw`).
 //! - [`call_frame`] — decoding `XLA_FFI_CallFrame`. [`call_frame::Frame`] ties
 //!   every decoded slice to the call's lifetime; slices are built only inside
 //!   [`call_frame::Buf`]/[`call_frame::BufMut`], which validate rank/dims
@@ -29,7 +30,6 @@ pub mod capi;
 pub mod engine;
 pub mod error;
 pub mod handlers;
-pub mod klu;
 pub mod xla_ffi;
 
 pub use error::{guard, make_error, ErrorInfo};

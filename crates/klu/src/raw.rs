@@ -1,12 +1,13 @@
-//! Safe wrapper around the raw `klu-sys` FFI.
+//! Low-level, handle-ID based KLU operations.
 //!
-//! This is the single unsafe boundary for KLU calls in `klujax-ffi`: every
-//! `unsafe` operation against `klu-sys` lives here, and callers get ordinary
-//! `Result`-returning functions. `engine.rs` is therefore `forbid(unsafe_code)`.
+//! This module is the single unsafe boundary around `klu-sys`. Every `unsafe`
+//! operation against the C library lives here. Handles are opaque, never-reused
+//! `u64` IDs into a process-global registry; the ergonomic types in
+//! [`crate::Symbolic`]/[`crate::Numeric`] and the XLA layer in `klujax-ffi` are
+//! both built on top of these functions.
 
-#![allow(clippy::too_many_arguments)]
-
-use crate::error::ErrorInfo;
+use crate::error::{Error, Result};
+use crate::scalar::Scalar;
 use core::ffi::c_int;
 use core::mem::MaybeUninit;
 use klu_sys::{
@@ -15,295 +16,6 @@ use klu_sys::{
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
-
-/// Interleaved `complex<double>`, ABI-compatible with `double[2]`.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct C64 {
-    pub re: f64,
-    pub im: f64,
-}
-
-/// Scalar types KLU operates on.
-///
-/// # Safety
-/// `f64_ptr`/`f64_ptr_const` must reinterpret the slice as `f64`; sound for
-/// `f64` and `C64` (`#[repr(C)]` of two `f64`). Implementations must use the
-/// KLU routines matching `IS_COMPLEX`, honor their documented buffer lengths,
-/// and return only KLU-allocated numeric objects for the supplied symbolic.
-pub unsafe trait Scalar: crate::call_frame::Element + 'static {
-    /// Whether this is a complex scalar type.
-    const IS_COMPLEX: bool;
-    /// The matching `XLA_FFI_DataType`.
-    const DTYPE: c_int;
-    /// Additive identity.
-    fn zero() -> Self;
-    /// `a * b`.
-    fn mul(a: Self, b: Self) -> Self;
-    /// `a + b`.
-    fn add(a: Self, b: Self) -> Self;
-    /// Raw pointer to the slice (reinterpreted as `f64`).
-    fn f64_ptr(s: &mut [Self]) -> *mut f64;
-    /// Const raw pointer to the slice (reinterpreted as `f64`).
-    fn f64_ptr_const(s: &[Self]) -> *const f64;
-
-    /// `klu_factor` / `klu_z_factor`.
-    ///
-    /// # Safety
-    /// CSC arrays and handles must be valid (see the callers here).
-    unsafe fn lu_factor(
-        bp: &mut [i32],
-        bi: &mut [i32],
-        bx: &mut [Self],
-        sym: *mut klu_symbolic,
-        common: *mut klu_common,
-    ) -> *mut klu_numeric;
-
-    /// `klu_refactor` / `klu_z_refactor`.
-    ///
-    /// # Safety
-    /// As [`Scalar::lu_factor`], with a valid `num`.
-    unsafe fn lu_refactor(
-        bp: &mut [i32],
-        bi: &mut [i32],
-        bx: &mut [Self],
-        sym: *mut klu_symbolic,
-        num: *mut klu_numeric,
-        common: *mut klu_common,
-    ) -> c_int;
-
-    /// `klu_solve` / `klu_z_solve`.
-    ///
-    /// # Safety
-    /// Matching valid handles and a valid RHS buffer.
-    unsafe fn lu_solve(
-        sym: *mut klu_symbolic,
-        num: *mut klu_numeric,
-        n_col: usize,
-        n_rhs: usize,
-        b: &mut [Self],
-        common: *mut klu_common,
-    ) -> c_int;
-
-    /// `klu_tsolve` / `klu_z_tsolve` (plain transpose).
-    ///
-    /// # Safety
-    /// As [`Scalar::lu_solve`].
-    unsafe fn lu_tsolve(
-        sym: *mut klu_symbolic,
-        num: *mut klu_numeric,
-        n_col: usize,
-        n_rhs: usize,
-        b: &mut [Self],
-        common: *mut klu_common,
-    ) -> c_int;
-}
-
-// SAFETY: f64 has the real KLU scalar layout and dispatches to real routines.
-unsafe impl Scalar for f64 {
-    const IS_COMPLEX: bool = false;
-    const DTYPE: c_int = crate::xla_ffi::dtype::F64;
-    fn zero() -> Self {
-        0.0
-    }
-    fn mul(a: Self, b: Self) -> Self {
-        a * b
-    }
-    fn add(a: Self, b: Self) -> Self {
-        a + b
-    }
-    fn f64_ptr(s: &mut [Self]) -> *mut f64 {
-        s.as_mut_ptr()
-    }
-    fn f64_ptr_const(s: &[Self]) -> *const f64 {
-        s.as_ptr()
-    }
-    unsafe fn lu_factor(
-        bp: &mut [i32],
-        bi: &mut [i32],
-        bx: &mut [Self],
-        sym: *mut klu_symbolic,
-        common: *mut klu_common,
-    ) -> *mut klu_numeric {
-        // SAFETY: the caller supplies matching live handles and valid CSC/RHS slices.
-        unsafe {
-            klu_sys::klu_factor(
-                bp.as_mut_ptr(),
-                bi.as_mut_ptr(),
-                Self::f64_ptr(bx),
-                sym,
-                common,
-            )
-        }
-    }
-    unsafe fn lu_refactor(
-        bp: &mut [i32],
-        bi: &mut [i32],
-        bx: &mut [Self],
-        sym: *mut klu_symbolic,
-        num: *mut klu_numeric,
-        common: *mut klu_common,
-    ) -> c_int {
-        // SAFETY: the caller supplies matching live handles and valid CSC/RHS slices.
-        unsafe {
-            klu_sys::klu_refactor(
-                bp.as_mut_ptr(),
-                bi.as_mut_ptr(),
-                Self::f64_ptr(bx),
-                sym,
-                num,
-                common,
-            )
-        }
-    }
-    unsafe fn lu_solve(
-        sym: *mut klu_symbolic,
-        num: *mut klu_numeric,
-        n_col: usize,
-        n_rhs: usize,
-        b: &mut [Self],
-        common: *mut klu_common,
-    ) -> c_int {
-        // SAFETY: the caller supplies matching live handles and valid CSC/RHS slices.
-        unsafe {
-            klu_sys::klu_solve(
-                sym,
-                num,
-                n_col as c_int,
-                n_rhs as c_int,
-                Self::f64_ptr(b),
-                common,
-            )
-        }
-    }
-    unsafe fn lu_tsolve(
-        sym: *mut klu_symbolic,
-        num: *mut klu_numeric,
-        n_col: usize,
-        n_rhs: usize,
-        b: &mut [Self],
-        common: *mut klu_common,
-    ) -> c_int {
-        // SAFETY: the caller supplies matching live handles and valid CSC/RHS slices.
-        unsafe {
-            klu_sys::klu_tsolve(
-                sym,
-                num,
-                n_col as c_int,
-                n_rhs as c_int,
-                Self::f64_ptr(b),
-                common,
-            )
-        }
-    }
-}
-
-// SAFETY: C64 is two repr(C) f64 fields and dispatches to complex routines.
-unsafe impl Scalar for C64 {
-    const IS_COMPLEX: bool = true;
-    const DTYPE: c_int = crate::xla_ffi::dtype::C128;
-    fn zero() -> Self {
-        Self { re: 0.0, im: 0.0 }
-    }
-    fn mul(a: Self, b: Self) -> Self {
-        Self {
-            re: a.re * b.re - a.im * b.im,
-            im: a.re * b.im + a.im * b.re,
-        }
-    }
-    fn add(a: Self, b: Self) -> Self {
-        Self {
-            re: a.re + b.re,
-            im: a.im + b.im,
-        }
-    }
-    fn f64_ptr(s: &mut [Self]) -> *mut f64 {
-        s.as_mut_ptr() as *mut f64
-    }
-    fn f64_ptr_const(s: &[Self]) -> *const f64 {
-        s.as_ptr() as *const f64
-    }
-    unsafe fn lu_factor(
-        bp: &mut [i32],
-        bi: &mut [i32],
-        bx: &mut [Self],
-        sym: *mut klu_symbolic,
-        common: *mut klu_common,
-    ) -> *mut klu_numeric {
-        // SAFETY: the caller supplies matching live handles and valid CSC/RHS slices.
-        unsafe {
-            klu_sys::klu_z_factor(
-                bp.as_mut_ptr(),
-                bi.as_mut_ptr(),
-                Self::f64_ptr(bx),
-                sym,
-                common,
-            )
-        }
-    }
-    unsafe fn lu_refactor(
-        bp: &mut [i32],
-        bi: &mut [i32],
-        bx: &mut [Self],
-        sym: *mut klu_symbolic,
-        num: *mut klu_numeric,
-        common: *mut klu_common,
-    ) -> c_int {
-        // SAFETY: the caller supplies matching live handles and valid CSC/RHS slices.
-        unsafe {
-            klu_sys::klu_z_refactor(
-                bp.as_mut_ptr(),
-                bi.as_mut_ptr(),
-                Self::f64_ptr(bx),
-                sym,
-                num,
-                common,
-            )
-        }
-    }
-    unsafe fn lu_solve(
-        sym: *mut klu_symbolic,
-        num: *mut klu_numeric,
-        n_col: usize,
-        n_rhs: usize,
-        b: &mut [Self],
-        common: *mut klu_common,
-    ) -> c_int {
-        // SAFETY: the caller supplies matching live handles and valid CSC/RHS slices.
-        unsafe {
-            klu_sys::klu_z_solve(
-                sym,
-                num,
-                n_col as c_int,
-                n_rhs as c_int,
-                Self::f64_ptr(b),
-                common,
-            )
-        }
-    }
-    unsafe fn lu_tsolve(
-        sym: *mut klu_symbolic,
-        num: *mut klu_numeric,
-        n_col: usize,
-        n_rhs: usize,
-        b: &mut [Self],
-        common: *mut klu_common,
-    ) -> c_int {
-        // conj_solve = 0 -> plain transpose A^T (matches the C++ wrapper).
-        // SAFETY: the caller supplies matching live handles and valid CSC/RHS slices.
-        unsafe {
-            klu_sys::klu_z_tsolve(
-                sym,
-                num,
-                n_col as c_int,
-                n_rhs as c_int,
-                Self::f64_ptr(b),
-                0,
-                common,
-            )
-        }
-    }
-}
 
 /// Safe owner of a `klu_common` control/status block.
 pub struct Common(klu_common);
@@ -400,14 +112,14 @@ fn registry() -> &'static Mutex<Registry> {
     REGISTRY.get_or_init(|| Mutex::new(Registry::default()))
 }
 
-fn insert(entry: Entry) -> Result<u64, ErrorInfo> {
+fn insert(entry: Entry) -> Result<u64> {
     let mut registry = registry()
         .lock()
-        .map_err(|_| ErrorInfo::internal("handle registry poisoned"))?;
+        .map_err(|_| Error::internal("handle registry poisoned"))?;
     registry.next = registry
         .next
         .checked_add(1)
-        .ok_or_else(|| ErrorInfo::internal("handle IDs exhausted"))?;
+        .ok_or_else(|| Error::internal("handle IDs exhausted"))?;
     let id = registry.next;
     let numeric = matches!(entry, Entry::Numeric { .. });
     registry
@@ -416,23 +128,23 @@ fn insert(entry: Entry) -> Result<u64, ErrorInfo> {
     Ok(id)
 }
 
-fn lookup(id: u64) -> Result<Arc<Mutex<Entry>>, ErrorInfo> {
+fn lookup(id: u64) -> Result<Arc<Mutex<Entry>>> {
     registry()
         .lock()
-        .map_err(|_| ErrorInfo::internal("handle registry poisoned"))?
+        .map_err(|_| Error::internal("handle registry poisoned"))?
         .entries
         .get(&id)
         .map(|(_, entry)| Arc::clone(entry))
-        .ok_or_else(|| ErrorInfo::invalid("invalid or closed KLU handle"))
+        .ok_or_else(|| Error::invalid("invalid or closed KLU handle"))
 }
 
-fn lock(entry: &Mutex<Entry>) -> Result<std::sync::MutexGuard<'_, Entry>, ErrorInfo> {
+fn lock(entry: &Mutex<Entry>) -> Result<std::sync::MutexGuard<'_, Entry>> {
     entry
         .lock()
-        .map_err(|_| ErrorInfo::internal("KLU handle poisoned"))
+        .map_err(|_| Error::internal("KLU handle poisoned"))
 }
 
-fn pattern(n: usize, bp: &[i32], bi: &[i32]) -> Result<(), ErrorInfo> {
+fn pattern(n: usize, bp: &[i32], bi: &[i32]) -> Result<()> {
     if n == 0
         || n > i32::MAX as usize
         || bi.len() > i32::MAX as usize
@@ -442,14 +154,14 @@ fn pattern(n: usize, bp: &[i32], bi: &[i32]) -> Result<(), ErrorInfo> {
         || bp.windows(2).any(|w| w[0] < 0 || w[0] > w[1])
         || bi.iter().any(|&i| i < 0 || i as usize >= n)
     {
-        return Err(ErrorInfo::invalid("invalid CSC pattern"));
+        return Err(Error::invalid("invalid CSC pattern"));
     }
     // KLU requires unique row indices in each column (sorting is optional).
     let mut seen = vec![usize::MAX; n];
     for col in 0..n {
         for &row in &bi[bp[col] as usize..bp[col + 1] as usize] {
             if seen[row as usize] == col {
-                return Err(ErrorInfo::invalid("duplicate CSC entry"));
+                return Err(Error::invalid("duplicate CSC entry"));
             }
             seen[row as usize] = col;
         }
@@ -459,14 +171,14 @@ fn pattern(n: usize, bp: &[i32], bi: &[i32]) -> Result<(), ErrorInfo> {
 
 type SymbolicParts<'a> = (*mut klu_symbolic, usize, &'a [i32], &'a [i32]);
 
-fn symbolic(entry: &Entry) -> Result<SymbolicParts<'_>, ErrorInfo> {
+fn symbolic(entry: &Entry) -> Result<SymbolicParts<'_>> {
     match entry {
         Entry::Symbolic { ptr, n, bp, bi } => Ok((*ptr, *n, bp, bi)),
-        _ => Err(ErrorInfo::invalid("expected symbolic handle")),
+        _ => Err(Error::invalid("expected symbolic handle")),
     }
 }
 
-fn numeric<T: Scalar>(entry: &Entry, sym: u64) -> Result<*mut klu_numeric, ErrorInfo> {
+fn numeric<T: Scalar>(entry: &Entry, sym: u64) -> Result<*mut klu_numeric> {
     match entry {
         Entry::Numeric {
             ptr,
@@ -474,21 +186,29 @@ fn numeric<T: Scalar>(entry: &Entry, sym: u64) -> Result<*mut klu_numeric, Error
             complex,
             ..
         } if *symbolic == sym && *complex == T::IS_COMPLEX => Ok(*ptr),
-        _ => Err(ErrorInfo::invalid(
+        _ => Err(Error::invalid(
             "numeric handle does not match symbolic or scalar type",
         )),
     }
 }
 
 /// Number of columns of a live symbolic handle.
-pub fn symbolic_n(sym: u64) -> Result<usize, ErrorInfo> {
+pub fn symbolic_n(sym: u64) -> Result<usize> {
     let entry = lookup(sym)?;
     let entry = lock(&entry)?;
     Ok(symbolic(&entry)?.1)
 }
 
+/// The canonical CSC pattern `(bp, bi)` stored with a symbolic handle.
+pub(crate) fn symbolic_pattern(sym: u64) -> Result<(usize, Vec<i32>, Vec<i32>)> {
+    let entry = lookup(sym)?;
+    let entry = lock(&entry)?;
+    let (_, n, bp, bi) = symbolic(&entry)?;
+    Ok((n, bp.to_vec(), bi.to_vec()))
+}
+
 /// Analyze validated CSC arrays and return an owning opaque handle ID.
-pub fn analyze(n_col: usize, bp: &mut [i32], bi: &mut [i32]) -> Result<u64, ErrorInfo> {
+pub fn analyze(n_col: usize, bp: &mut [i32], bi: &mut [i32]) -> Result<u64> {
     pattern(n_col, bp, bi)?;
     let mut common = Common::new();
     // SAFETY: pattern checked dimensions, lengths, indices and uniqueness.
@@ -501,7 +221,7 @@ pub fn analyze(n_col: usize, bp: &mut [i32], bi: &mut [i32]) -> Result<u64, Erro
         )
     };
     if ptr.is_null() {
-        return Err(ErrorInfo::internal("klu_analyze failed."));
+        return Err(Error::internal("klu_analyze failed."));
     }
     let entry = Entry::Symbolic {
         ptr,
@@ -510,7 +230,7 @@ pub fn analyze(n_col: usize, bp: &mut [i32], bi: &mut [i32]) -> Result<u64, Erro
         bi: bi.to_vec(),
     };
     if !common.ok() {
-        return Err(ErrorInfo::internal("klu_analyze failed."));
+        return Err(Error::internal("klu_analyze failed."));
     }
     insert(entry)
 }
@@ -522,19 +242,19 @@ pub fn factor<T: Scalar>(
     bi: &mut [i32],
     bx: &mut [T],
     sym: u64,
-) -> Result<u64, ErrorInfo> {
+) -> Result<u64> {
     let owner = lookup(sym)?;
     let entry = lock(&owner)?;
     let (ptr, _, expected_bp, expected_bi) = symbolic(&entry)?;
     if bp != expected_bp || bi != expected_bi || bx.len() != bi.len() {
-        return Err(ErrorInfo::invalid(
+        return Err(Error::invalid(
             "factor arrays do not match symbolic pattern",
         ));
     }
     // SAFETY: the locked owner keeps ptr live; CSC and values match its validated pattern.
     let ptr = unsafe { T::lu_factor(bp, bi, bx, ptr, common.ptr()) };
     if ptr.is_null() {
-        return Err(ErrorInfo::invalid(
+        return Err(Error::singular(
             "klu_factor/z_factor failed (singular matrix?)",
         ));
     }
@@ -545,10 +265,44 @@ pub fn factor<T: Scalar>(
         usable: true,
     };
     if !common.ok() {
-        return Err(ErrorInfo::invalid(
+        return Err(Error::singular(
             "klu_factor/z_factor failed (singular matrix?)",
         ));
     }
+    insert(numeric)
+}
+
+/// Factor values for a symbolic handle using its stored (canonical) pattern.
+///
+/// `ax` must be in the canonical CSC order returned by [`symbolic_pattern`].
+pub fn factor_values<T: Scalar>(common: &mut Common, ax: &[T], sym: u64) -> Result<u64> {
+    let (n, mut bp, mut bi) = symbolic_pattern(sym)?;
+    if ax.len() != bi.len() {
+        return Err(Error::invalid("matrix value count does not match pattern"));
+    }
+    let mut bx = ax.to_vec();
+    let root = lookup(sym)?;
+    let entry = lock(&root)?;
+    let (ptr, _, _, _) = symbolic(&entry)?;
+    // SAFETY: the locked symbolic owner keeps ptr live; pattern and bx match it.
+    let num = unsafe { T::lu_factor(&mut bp, &mut bi, &mut bx, ptr, common.ptr()) };
+    if num.is_null() {
+        return Err(Error::singular(
+            "klu_factor/z_factor failed (singular matrix?)",
+        ));
+    }
+    let numeric = Entry::Numeric {
+        ptr: num,
+        symbolic: sym,
+        complex: T::IS_COMPLEX,
+        usable: true,
+    };
+    if !common.ok() {
+        return Err(Error::singular(
+            "klu_factor/z_factor failed (singular matrix?)",
+        ));
+    }
+    let _ = n;
     insert(numeric)
 }
 
@@ -560,9 +314,9 @@ pub fn refactor<T: Scalar>(
     bx: &mut [T],
     sym: u64,
     num: u64,
-) -> Result<(), ErrorInfo> {
+) -> Result<()> {
     if sym == num {
-        return Err(ErrorInfo::invalid(
+        return Err(Error::invalid(
             "expected distinct symbolic and numeric handles",
         ));
     }
@@ -573,7 +327,7 @@ pub fn refactor<T: Scalar>(
     let mut num_entry = lock(&num_owner)?;
     let num_ptr = numeric::<T>(&num_entry, sym)?;
     if bp != expected_bp || bi != expected_bi || bx.len() != bi.len() {
-        return Err(ErrorInfo::invalid(
+        return Err(Error::invalid(
             "refactor arrays do not match symbolic pattern",
         ));
     }
@@ -584,12 +338,22 @@ pub fn refactor<T: Scalar>(
     // SAFETY: both owners are locked and alive, with matching type, pattern and values.
     let status = unsafe { T::lu_refactor(bp, bi, bx, sym_ptr, num_ptr, common.ptr()) };
     if status == 0 || !common.ok() {
-        return Err(ErrorInfo::invalid(
+        return Err(Error::singular(
             "klu_refactor/z_refactor failed (singular matrix?)",
         ));
     }
     *usable = true;
     Ok(())
+}
+
+/// Re-factor values for a symbolic/numeric pair using the stored pattern.
+pub fn refactor_values<T: Scalar>(common: &mut Common, ax: &[T], sym: u64, num: u64) -> Result<()> {
+    let (_, mut bp, mut bi) = symbolic_pattern(sym)?;
+    if ax.len() != bi.len() {
+        return Err(Error::invalid("matrix value count does not match pattern"));
+    }
+    let mut bx = ax.to_vec();
+    refactor(common, &mut bp, &mut bi, &mut bx, sym, num)
 }
 
 /// Solve using live, matching handles and an exactly sized RHS buffer.
@@ -601,9 +365,9 @@ pub fn solve<T: Scalar>(
     n_rhs: usize,
     b: &mut [T],
     transpose: bool,
-) -> Result<(), ErrorInfo> {
+) -> Result<()> {
     if sym == num {
-        return Err(ErrorInfo::invalid(
+        return Err(Error::invalid(
             "expected distinct symbolic and numeric handles",
         ));
     }
@@ -614,12 +378,12 @@ pub fn solve<T: Scalar>(
     let num_entry = lock(&num_owner)?;
     let num_ptr = numeric::<T>(&num_entry, sym)?;
     if matches!(*num_entry, Entry::Numeric { usable: false, .. }) {
-        return Err(ErrorInfo::invalid(
+        return Err(Error::invalid(
             "numeric factorization invalid after failed refactor",
         ));
     }
     if n_col != n || n_rhs > i32::MAX as usize || n.checked_mul(n_rhs) != Some(b.len()) {
-        return Err(ErrorInfo::invalid(
+        return Err(Error::invalid(
             "RHS dimensions do not match symbolic matrix",
         ));
     }
@@ -633,7 +397,7 @@ pub fn solve<T: Scalar>(
         }
     };
     if status == 0 || !common.ok() {
-        return Err(ErrorInfo::invalid("klu_solve/tsolve failed"));
+        return Err(Error::invalid("klu_solve/tsolve failed"));
     }
     Ok(())
 }
@@ -666,9 +430,20 @@ pub fn free_symbolic(_common: &mut Common, sym: u64) {
     remove(sym, false);
 }
 
+/// Release a numeric ID without a `Common` (for RAII owners).
+pub fn release_numeric(num: u64) {
+    remove(num, true);
+}
+
+/// Release a symbolic ID without a `Common` (for RAII owners).
+pub fn release_symbolic(sym: u64) {
+    remove(sym, false);
+}
+
 #[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
+    use crate::scalar::C64;
 
     fn diagonal() -> (u64, u64) {
         let (mut bp, mut bi, mut bx) = ([0, 1, 2], [0, 1], [2.0, 4.0]);
@@ -680,45 +455,6 @@ mod tests {
     #[test]
     fn defaults_initialize_singular_column() {
         assert_eq!(Common::new().0.singular_col, 0);
-    }
-
-    fn numeric_outlives_symbolic<T: Scalar + std::fmt::Debug + PartialEq>(mut values: [T; 2]) {
-        let mut common = Common::new();
-        let (mut bp, mut bi) = ([0, 1, 2], [0, 1]);
-        let sym = analyze(2, &mut bp, &mut bi).unwrap();
-        let num = factor(&mut common, &mut bp, &mut bi, &mut values, sym).unwrap();
-        let weak_sym = Arc::downgrade(&lookup(sym).unwrap());
-        let weak_num = Arc::downgrade(&lookup(num).unwrap());
-
-        free_symbolic(&mut common, sym);
-        assert!(lookup(sym).is_err());
-        assert!(weak_sym.upgrade().is_none());
-        assert!(weak_num.upgrade().is_some());
-
-        for transpose in [false, true] {
-            let mut rhs = values;
-            let error = solve(&mut common, sym, num, 2, 1, &mut rhs, transpose).unwrap_err();
-            assert_eq!(
-                error.message.to_str().unwrap(),
-                "invalid or closed KLU handle"
-            );
-            assert_eq!(rhs, values);
-        }
-
-        free_numeric(&mut common, num);
-        assert!(lookup(num).is_err());
-        assert!(weak_num.upgrade().is_none());
-        free_numeric(&mut common, num);
-    }
-
-    #[test]
-    fn real_numeric_can_be_freed_after_symbolic_and_rejects_solve() {
-        numeric_outlives_symbolic([2.0, 4.0]);
-    }
-
-    #[test]
-    fn complex_numeric_can_be_freed_after_symbolic_and_rejects_solve() {
-        numeric_outlives_symbolic([C64 { re: 2.0, im: 1.0 }, C64 { re: 4.0, im: -1.0 }]);
     }
 
     #[test]
@@ -795,24 +531,21 @@ mod tests {
         let (sym, num) = diagonal();
         let owner = lookup(sym).unwrap();
         let weak = Arc::downgrade(&owner);
-        crate::capi::klujax_free_symbolic(sym);
+        release_symbolic(sym);
         assert!(symbolic_n(sym).is_err());
         assert!(weak.upgrade().is_some());
         assert_eq!(symbolic(&lock(&owner).unwrap()).unwrap().1, 2);
         drop(owner);
         assert!(weak.upgrade().is_none());
-        let handles = [num, num, u64::MAX];
-        // SAFETY: handles is a live array of initialized u64 values.
-        unsafe {
-            crate::capi::klujax_free_numeric(handles.as_ptr(), handles.len());
-        }
+        release_numeric(num);
+        release_numeric(num);
         assert!(lookup(num).is_err());
-        crate::capi::klujax_free_symbolic(sym);
+        release_symbolic(sym);
         let (fresh_sym, fresh_num) = diagonal();
         assert_ne!(fresh_sym, sym);
         assert_ne!(fresh_num, num);
-        free_numeric(&mut Common::new(), fresh_num);
-        free_symbolic(&mut Common::new(), fresh_sym);
+        release_numeric(fresh_num);
+        release_symbolic(fresh_sym);
     }
 
     #[test]
@@ -826,8 +559,44 @@ mod tests {
                 }
             }
         });
-        free_numeric(&mut Common::new(), num);
-        free_symbolic(&mut Common::new(), sym);
+        release_numeric(num);
+        release_symbolic(sym);
         worker.join().unwrap();
+    }
+
+    fn numeric_outlives_symbolic<T: Scalar + std::fmt::Debug + PartialEq>(mut values: [T; 2]) {
+        let mut common = Common::new();
+        let (mut bp, mut bi) = ([0, 1, 2], [0, 1]);
+        let sym = analyze(2, &mut bp, &mut bi).unwrap();
+        let num = factor(&mut common, &mut bp, &mut bi, &mut values, sym).unwrap();
+        let weak_sym = Arc::downgrade(&lookup(sym).unwrap());
+        let weak_num = Arc::downgrade(&lookup(num).unwrap());
+
+        release_symbolic(sym);
+        assert!(lookup(sym).is_err());
+        assert!(weak_sym.upgrade().is_none());
+        assert!(weak_num.upgrade().is_some());
+
+        for transpose in [false, true] {
+            let mut rhs = values;
+            let error = solve(&mut common, sym, num, 2, 1, &mut rhs, transpose).unwrap_err();
+            assert_eq!(error.message, "invalid or closed KLU handle");
+            assert_eq!(rhs, values);
+        }
+
+        release_numeric(num);
+        assert!(lookup(num).is_err());
+        assert!(weak_num.upgrade().is_none());
+        release_numeric(num);
+    }
+
+    #[test]
+    fn real_numeric_can_be_freed_after_symbolic_and_rejects_solve() {
+        numeric_outlives_symbolic([2.0, 4.0]);
+    }
+
+    #[test]
+    fn complex_numeric_can_be_freed_after_symbolic_and_rejects_solve() {
+        numeric_outlives_symbolic([C64 { re: 2.0, im: 1.0 }, C64 { re: 4.0, im: -1.0 }]);
     }
 }

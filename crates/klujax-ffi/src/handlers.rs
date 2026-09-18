@@ -5,10 +5,10 @@
 //! wrapper, the frame decode (arguments in order, results in order), the
 //! `# Safety` doc and the panic/error guard.
 
-use crate::call_frame::{Buf, BufMut};
+use crate::call_frame::{Buf, BufMut, Element};
 use crate::engine::{self, Scalar};
 use crate::error::ErrorInfo;
-use crate::klu::C64;
+use klu::C64;
 use klujax_ffi_macros::xla_handler;
 
 // ---- shared helpers -------------------------------------------------------
@@ -55,7 +55,7 @@ fn analyze_h(
 }
 
 #[xla_handler(scalars(f64 => "factor_f64", C64 => "factor_c128"))]
-fn factor<T: Scalar>(
+fn factor<T: Scalar + Element>(
     ai: Buf<i32>,
     aj: Buf<i32>,
     ax: Buf<T>,
@@ -68,7 +68,7 @@ fn factor<T: Scalar>(
 }
 
 #[xla_handler(scalars(f64 => "refactor_f64", C64 => "refactor_c128"))]
-fn refactor<T: Scalar>(
+fn refactor<T: Scalar + Element>(
     ai: Buf<i32>,
     aj: Buf<i32>,
     ax: Buf<T>,
@@ -82,7 +82,7 @@ fn refactor<T: Scalar>(
 }
 
 #[xla_handler(scalars(f64 => "solve_f64", C64 => "solve_c128"))]
-fn solve<T: Scalar>(
+fn solve<T: Scalar + Element>(
     ai: Buf<i32>,
     aj: Buf<i32>,
     ax: Buf<T>,
@@ -95,7 +95,7 @@ fn solve<T: Scalar>(
 }
 
 #[xla_handler(scalars(f64 => "solve_with_symbol_f64", C64 => "solve_with_symbol_c128"))]
-fn solve_with_symbol<T: Scalar>(
+fn solve_with_symbol<T: Scalar + Element>(
     ai: Buf<i32>,
     aj: Buf<i32>,
     ax: Buf<T>,
@@ -110,7 +110,7 @@ fn solve_with_symbol<T: Scalar>(
 }
 
 #[xla_handler(scalars(f64 => "tsolve_with_symbol_f64", C64 => "tsolve_with_symbol_c128"))]
-fn tsolve_with_symbol<T: Scalar>(
+fn tsolve_with_symbol<T: Scalar + Element>(
     ai: Buf<i32>,
     aj: Buf<i32>,
     ax: Buf<T>,
@@ -156,7 +156,7 @@ fn numeric_dims(bd: &[i64], n_numeric: usize) -> Result<(usize, usize, usize, bo
     Ok((n_lhs, n_col, n_rhs, broadcast_b))
 }
 
-fn numeric_solve<T: Scalar>(
+fn numeric_solve<T: Scalar + Element>(
     sym: &Buf<u64>,
     numeric: &Buf<u64>,
     b: &Buf<T>,
@@ -188,7 +188,7 @@ fn numeric_solve<T: Scalar>(
 }
 
 #[xla_handler(scalars(f64 => "solve_with_numeric_f64", C64 => "solve_with_numeric_c128"))]
-fn solve_with_numeric<T: Scalar>(
+fn solve_with_numeric<T: Scalar + Element>(
     sym: Buf<u64>,
     numeric: Buf<u64>,
     b: Buf<T>,
@@ -198,7 +198,7 @@ fn solve_with_numeric<T: Scalar>(
 }
 
 #[xla_handler(scalars(f64 => "tsolve_with_numeric_f64", C64 => "tsolve_with_numeric_c128"))]
-fn tsolve_with_numeric<T: Scalar>(
+fn tsolve_with_numeric<T: Scalar + Element>(
     sym: Buf<u64>,
     numeric: Buf<u64>,
     b: Buf<T>,
@@ -209,7 +209,7 @@ fn tsolve_with_numeric<T: Scalar>(
 
 #[allow(clippy::too_many_arguments)]
 #[xla_handler(scalars(f64 => "refactor_and_solve_f64", C64 => "refactor_and_solve_c128"))]
-fn refactor_and_solve<T: Scalar>(
+fn refactor_and_solve<T: Scalar + Element>(
     ai: Buf<i32>,
     aj: Buf<i32>,
     ax: Buf<T>,
@@ -235,7 +235,7 @@ fn refactor_and_solve<T: Scalar>(
 }
 
 #[xla_handler(scalars(f64 => "dot_f64", C64 => "dot_c128"))]
-fn dot<T: Scalar>(
+fn dot<T: Scalar + Element>(
     ai: Buf<i32>,
     aj: Buf<i32>,
     ax: Buf<T>,

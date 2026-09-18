@@ -17,7 +17,7 @@ mod sealed {
     impl Sealed for i32 {}
     impl Sealed for u64 {}
     impl Sealed for f64 {}
-    impl Sealed for crate::klu::C64 {}
+    impl Sealed for klu::C64 {}
 }
 
 /// The supported XLA scalar layouts. Sealed so safe callers cannot claim an
@@ -34,7 +34,7 @@ impl Element for u64 {
 impl Element for f64 {
     const DTYPE: c_int = crate::xla_ffi::dtype::F64;
 }
-impl Element for crate::klu::C64 {
+impl Element for klu::C64 {
     const DTYPE: c_int = crate::xla_ffi::dtype::C128;
 }
 

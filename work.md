@@ -19,9 +19,10 @@ or ABI changes. Every stage must keep the existing gates green.
 Repo layout:
 
 ```
+crates/klu/               ergonomic Rust facade: Coo/Csc, Symbolic, Numeric
 crates/klu-sys/          raw FFI + build.rs (SuiteSparse submodule, cc, static)
-crates/klujax-ffi/src/   xla_ffi.rs, call_frame.rs, klu.rs, error.rs,
-                         engine.rs, handlers.rs, capi.rs, lib.rs
+crates/klujax-ffi/src/   xla_ffi.rs, call_frame.rs, error.rs, engine.rs,
+                         handlers.rs, capi.rs, lib.rs (backed by `klu::raw`)
 crates/klujax-ffi-macros/ internal `#[xla_handler]` proc-macro
 klujax_native/           ctypes loader + capsule providers + handle classes
 ```
@@ -328,6 +329,36 @@ fn solve<T: Scalar>(ai: Buf<i32>, aj: Buf<i32>, ax: Buf<T>, b: Buf<T>, x: BufMut
 
 ---
 
+## Enhancement — ergonomic `klu` facade crate (post-hardening)
+
+Status: **complete**. `crates/klu` is a standalone, ergonomic Rust API over the
+`klu-sys` backend, reusable in Rust projects and used as the core by
+`klujax-ffi` (`engine` calls it through `klu::raw`).
+
+- [x] Moved the safe KLU core (registry, `Common`, `Scalar`/`C64`, low-level
+      operations) from `klujax-ffi/src/klu.rs` into `crates/klu/src/raw.rs`;
+      `klujax-ffi` now depends on `klu` (no duplicated wrapper).
+- [x] Ergonomic types: `Coo` (consuming builder, coalesces + canonicalizes),
+      `Csc` (`values`/`set_values`/`residual`), `Symbolic` (Arc-backed `Clone`),
+      `Numeric<T>` (owns the factorization and keeps its `Symbolic` alive).
+- [x] Three solve modes, all RAII (no manual `free_*`):
+      - `klu::solve(&a, &b)` / `Csc::solve` — analyze + factor + solve.
+      - `Symbolic::solve(&ax, &b)` / `Symbolic::factor` — analyze once, values many.
+      - `Numeric::solve(&b)` / `solve_transpose` / `refactor`, `Numeric::symbolic()`
+        — factor once, RHS many; optional access to the symbolic analysis.
+- [x] `klu::Error` implements `std::error::Error` + `Display` (mapped to XLA
+      error codes by `klujax-ffi` via `From`); `klu::Result<T>`.
+- [x] Generic over `f64`/`C64`; the three doc examples are the crate doctests.
+- [x] `klujax-ffi` rewired: `engine` uses `klu::raw`; `handlers` use
+      `klu::{Scalar, C64}` + the XLA-local `Element` trait; `klujax-ffi` no
+      longer defines its own `klu` module.
+
+Verified: `cargo test --workspace` (klu 8 unit + 4 doctests; klujax-ffi 12;
+klu-sys 2), `clippy -D warnings`, `ffi_smoke` (21 + 3), **138 pytest**, miri,
+static-link. Unsafe operations 42.
+
+---
+
 ## Verification (must stay green throughout)
 
 ```sh
@@ -361,6 +392,7 @@ unchanged after every stage.
 
 | Date | Change |
 |---|---|
+| 2026-09-18 | Enhancement: added `crates/klu` facade (`Coo`/`Csc`/`Symbolic`/`Numeric`, `Error`, three solve modes) and moved the safe core there; `klujax-ffi::engine` now uses `klu::raw`, and `klujax-ffi/src/klu.rs` is gone. 138 pytest + Rust tests + clippy green; unsafe ops 42. |
 | 2026-03-21 | Enhancement: added `crates/klujax-ffi-macros` with `#[xla_handler]`; `Buf`/`BufMut` + `DecodeArg`/`DecodeRet` in `call_frame`; rewrote `handlers.rs` (21 symbols from ~11 safe fns). Unsafe operations 56 → 52; all gates + miri green. |
 | 2026-03-21 | Stage 6 (complete): added the safe `klu` wrapper module; rewrote `engine.rs` to `#![forbid(unsafe_code)]`; documented all remaining unsafe in `call_frame`/`error`/`handlers`/`klu-sys`; removed the last doc-lint suppressions; `lib.rs` documents the boundary. Unsafe operations **164 → 56**. All gates + miri green. |
 | 2026-03-21 | Stage 5 (complete): fully defined `klu_symbolic`; added `layout_matches_vendored_header` (compiles `klu.h`, asserts `sizeof`/`offsetof` vs Rust); documented the pinned version in `crates/klu-sys/README.md`; removed the `klu-sys` unsafe-doc allow. All gates green. |

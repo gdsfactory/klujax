@@ -149,3 +149,16 @@ unsafe fn populate_metadata(ext: *mut XLA_FFI_Metadata_Extension) {
         (*meta).state_type_id = XLA_FFI_TypeId { type_id: 0 };
     }
 }
+
+impl From<klu::Error> for ErrorInfo {
+    /// Map a `klu` crate error onto an XLA error code.
+    fn from(error: klu::Error) -> Self {
+        let code = match error.kind {
+            klu::ErrorKind::Internal => error_code::INTERNAL,
+            klu::ErrorKind::InvalidArgument | klu::ErrorKind::Singular => {
+                error_code::INVALID_ARGUMENT
+            }
+        };
+        Self::new(code, error.message.into_bytes())
+    }
+}

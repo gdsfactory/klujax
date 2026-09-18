@@ -109,6 +109,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "klu"
+version = "0.5.2"
+dependencies = [
+ "klu-sys",
+]
+
+[[package]]
 name = "klu-sys"
 version = "0.5.2"
 dependencies = [
@@ -119,6 +126,7 @@ dependencies = [
 name = "klujax-ffi"
 version = "0.5.2"
 dependencies = [
+ "klu",
  "klu-sys",
  "klujax-ffi-macros",
  "proptest",

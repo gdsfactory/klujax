@@ -1,4 +1,5 @@
 [dependencies]
+klu = { path = "../klu" }
 klu-sys = { path = "../klu-sys" }
 klujax-ffi-macros = { path = "../klujax-ffi-macros" }
 

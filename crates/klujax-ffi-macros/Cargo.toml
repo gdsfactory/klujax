@@ -1,17 +1,17 @@
-[package]
-name = "klujax-ffi-macros"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-description = "Internal proc-macros for klujax-ffi XLA handlers"
-
-[lib]
-proc-macro = true
-
 [dependencies]
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full", "visit-mut"] }
 
+[lib]
+proc-macro = true
+
 [lints]
 workspace = true
+
+[package]
+description = "Internal proc-macros for klujax-ffi XLA handlers"
+edition.workspace = true
+license.workspace = true
+name = "klujax-ffi-macros"
+version.workspace = true

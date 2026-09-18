@@ -1,14 +1,14 @@
 //! Numeric KLU engine: COO→CSC, batching, and RHS layout.
 //!
-//! Built on the safe [`crate::klu`] wrapper, so this module contains **no
-//! `unsafe`** (enforced by `#![forbid(unsafe_code)]`).
+//! Built on the safe `klu` crate's `raw` wrapper, so this module contains
+//! **no `unsafe`** (enforced by `#![forbid(unsafe_code)]`).
 
 #![forbid(unsafe_code)]
 
 use crate::error::ErrorInfo;
-use crate::klu::{self, Common};
+use klu::raw::{self as raw, Common};
 
-pub use crate::klu::{Scalar, C64};
+pub use klu::{Scalar, C64};
 
 /// Row-major `(n_lhs, n_col, n_rhs)` -> column-major `(n_lhs, n_rhs, n_col)`.
 ///
@@ -141,12 +141,12 @@ pub fn analyze_raw(n_col: usize, ai: &[i32], aj: &[i32]) -> Result<u64, ErrorInf
     let n_nz = ai.len();
     validate(ai, aj, 1, n_col, 1, n_nz)?;
     let (mut bi, mut bp, _) = coo_to_csc(n_col, n_nz, ai, aj);
-    klu::analyze(n_col, &mut bp, &mut bi)
+    raw::analyze(n_col, &mut bp, &mut bi).map_err(ErrorInfo::from)
 }
 
 /// Numeric factorization of one matrix; returns an opaque numeric ID as `u64`.
 pub fn factor_raw<T: Scalar>(ai: &[i32], aj: &[i32], ax: &[T], sym: u64) -> Result<u64, ErrorInfo> {
-    let n_col = klu::symbolic_n(sym)?;
+    let n_col = raw::symbolic_n(sym)?;
     let n_nz = ai.len();
     validate(ai, aj, 1, n_col, 1, n_nz)?;
     let (mut bi, mut bp, bk) = coo_to_csc(n_col, n_nz, ai, aj);
@@ -157,7 +157,7 @@ pub fn factor_raw<T: Scalar>(ai: &[i32], aj: &[i32], ax: &[T], sym: u64) -> Resu
     }
     let mut bx: Vec<T> = bk.iter().map(|&k| ax[k as usize]).collect();
     let mut common = Common::new();
-    klu::factor(&mut common, &mut bp, &mut bi, &mut bx, sym)
+    raw::factor(&mut common, &mut bp, &mut bi, &mut bx, sym).map_err(ErrorInfo::from)
 }
 
 /// Numeric factorization of a batch sharing one sparsity pattern.
@@ -168,7 +168,7 @@ pub fn factor_batch_raw<T: Scalar>(
     n_lhs: usize,
     sym: u64,
 ) -> Result<Vec<u64>, ErrorInfo> {
-    let n_col = klu::symbolic_n(sym)?;
+    let n_col = raw::symbolic_n(sym)?;
     let n_nz = ai.len();
     if n_nz.checked_mul(n_lhs) != Some(ax.len()) {
         return Err(ErrorInfo::invalid(
@@ -181,13 +181,13 @@ pub fn factor_batch_raw<T: Scalar>(
     let mut out = Vec::with_capacity(n_lhs);
     for i in 0..n_lhs {
         let mut bx = gather_ax(ax, &bk, i, n_nz);
-        match klu::factor(&mut common, &mut bp, &mut bi, &mut bx, sym) {
+        match raw::factor(&mut common, &mut bp, &mut bi, &mut bx, sym) {
             Ok(num) => out.push(num),
             Err(e) => {
                 for addr in out.drain(..) {
-                    klu::free_numeric(&mut common, addr);
+                    raw::free_numeric(&mut common, addr);
                 }
-                return Err(e);
+                return Err(e.into());
             }
         }
     }
@@ -204,7 +204,7 @@ pub fn refactor_batch_raw<T: Scalar>(
     sym: u64,
     numeric: &[u64],
 ) -> Result<Vec<u64>, ErrorInfo> {
-    let n_col = klu::symbolic_n(sym)?;
+    let n_col = raw::symbolic_n(sym)?;
     let n_nz = ai.len();
     if n_nz.checked_mul(n_lhs) != Some(ax.len()) {
         return Err(ErrorInfo::invalid(
@@ -224,7 +224,7 @@ pub fn refactor_batch_raw<T: Scalar>(
             return Err(ErrorInfo::invalid("numeric pointer is null"));
         }
         let mut bx = gather_ax(ax, &bk, i, n_nz);
-        klu::refactor(&mut common, &mut bp, &mut bi, &mut bx, sym, addr)?;
+        raw::refactor(&mut common, &mut bp, &mut bi, &mut bx, sym, addr)?;
         out[i] = addr;
     }
     Ok(out)
@@ -250,9 +250,9 @@ fn solve_with_symbol_impl<T: Scalar>(
 
     for i in 0..n_lhs {
         let mut bx = gather_ax(ax, &bk, i, n_nz);
-        let num = klu::factor(&mut common, &mut bp, &mut bi, &mut bx, sym)?;
+        let num = raw::factor(&mut common, &mut bp, &mut bi, &mut bx, sym)?;
         let n = i * n_rhs * n_col;
-        let result = klu::solve(
+        let result = raw::solve(
             &mut common,
             sym,
             num,
@@ -261,7 +261,7 @@ fn solve_with_symbol_impl<T: Scalar>(
             &mut x_temp[n..n + n_rhs * n_col],
             transpose,
         );
-        klu::free_numeric(&mut common, num);
+        raw::free_numeric(&mut common, num);
         result?;
     }
     Ok(to_row_major(&x_temp, n_lhs, n_col, n_rhs))
@@ -282,20 +282,20 @@ pub fn solve_raw<T: Scalar>(
     let (mut bi, mut bp, bk) = coo_to_csc(n_col, n_nz, ai, aj);
     let mut x_temp = to_col_major(b, n_lhs, n_col, n_rhs);
     let mut common = Common::new();
-    let root = klu::analyze(n_col, &mut bp, &mut bi)?;
+    let root = raw::analyze(n_col, &mut bp, &mut bi)?;
 
     let mut result: Result<(), ErrorInfo> = Ok(());
     for i in 0..n_lhs {
         let mut bx = gather_ax(ax, &bk, i, n_nz);
-        let num = match klu::factor(&mut common, &mut bp, &mut bi, &mut bx, root) {
+        let num = match raw::factor(&mut common, &mut bp, &mut bi, &mut bx, root) {
             Ok(num) => num,
             Err(e) => {
-                result = Err(e);
+                result = Err(e.into());
                 break;
             }
         };
         let n = i * n_rhs * n_col;
-        let res = klu::solve(
+        let res = raw::solve(
             &mut common,
             root,
             num,
@@ -304,13 +304,13 @@ pub fn solve_raw<T: Scalar>(
             &mut x_temp[n..n + n_rhs * n_col],
             false,
         );
-        klu::free_numeric(&mut common, num);
+        raw::free_numeric(&mut common, num);
         if let Err(e) = res {
-            result = Err(e);
+            result = Err(e.into());
             break;
         }
     }
-    klu::free_symbolic(&mut common, root);
+    raw::free_symbolic(&mut common, root);
     result?;
     Ok(to_row_major(&x_temp, n_lhs, n_col, n_rhs))
 }
@@ -355,7 +355,7 @@ pub fn solve_with_numeric_raw<T: Scalar>(
     n_rhs: usize,
     transpose: bool,
 ) -> Result<Vec<T>, ErrorInfo> {
-    let _ = klu::symbolic_n(sym)?; // null-check the symbolic handle
+    let _ = raw::symbolic_n(sym)?; // null-check the symbolic handle
     let broadcast_numeric = numeric.len() == 1;
     if !broadcast_numeric && numeric.len() != n_lhs {
         return Err(ErrorInfo::invalid("numeric and b batch size mismatch"));
@@ -372,7 +372,7 @@ pub fn solve_with_numeric_raw<T: Scalar>(
             return Err(ErrorInfo::invalid("numeric pointer is null"));
         }
         let n = i * n_rhs * n_col;
-        klu::solve(
+        raw::solve(
             &mut common,
             sym,
             addr,
@@ -415,7 +415,7 @@ pub fn dot_raw<T: Scalar>(
 /// Free a symbolic handle.
 pub fn free_symbolic_raw(sym: u64) -> i32 {
     let mut common = Common::new();
-    klu::free_symbolic(&mut common, sym);
+    raw::free_symbolic(&mut common, sym);
     common.status()
 }
 
@@ -423,7 +423,7 @@ pub fn free_symbolic_raw(sym: u64) -> i32 {
 pub fn free_numeric_raw(numeric: &[u64]) -> i32 {
     let mut common = Common::new();
     for &addr in numeric {
-        klu::free_numeric(&mut common, addr);
+        raw::free_numeric(&mut common, addr);
     }
     common.status()
 }
