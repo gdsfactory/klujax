@@ -1,5 +1,6 @@
 [dependencies]
 klu-sys = { path = "../klu-sys" }
+klujax-ffi-macros = { path = "../klujax-ffi-macros" }
 
 [dev-dependencies]
 proptest = "1"

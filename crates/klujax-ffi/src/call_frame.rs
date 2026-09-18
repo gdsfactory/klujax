@@ -239,7 +239,141 @@ impl<'a> BufferMut<'a> {
         // buffer for this invocation.
         unsafe { slice::from_raw_parts_mut(self.data as *mut T, n) }
     }
+
+    /// Read-only view of the result data (used by `Deref`).
+    pub fn as_slice<T: Copy>(&self) -> &'a [T] {
+        let n = self.element_count();
+        if self.data.is_null() || n == 0 {
+            return &[];
+        }
+        // SAFETY: as `Buffer::as_slice`.
+        unsafe { slice::from_raw_parts(self.data as *const T, n) }
+    }
 }
+
+// ---------------------------------------------------------------------------
+// Ergonomic decode for the `#[xla_handler]` proc-macro.
+// ---------------------------------------------------------------------------
+
+/// A read-only argument view: `Deref`s to `[T]` and carries its shape.
+pub struct Buf<'a, T> {
+    buffer: Buffer<'a>,
+    _t: PhantomData<&'a T>,
+}
+
+impl<'a, T: Copy> Buf<'a, T> {
+    /// The buffer shape.
+    pub fn dims(&self) -> &'a [i64] {
+        self.buffer.dims()
+    }
+
+    /// Number of elements.
+    pub fn element_count(&self) -> usize {
+        self.buffer.element_count()
+    }
+
+    /// The decoded slice.
+    pub fn as_slice(&self) -> &'a [T] {
+        self.buffer.as_slice::<T>()
+    }
+}
+
+impl<'a, T: Copy> core::ops::Deref for Buf<'a, T> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        self.buffer.as_slice::<T>()
+    }
+}
+
+/// A write-only result view: `DerefMut`s to `[T]` and carries its shape.
+pub struct BufMut<'a, T> {
+    buffer: BufferMut<'a>,
+    _t: PhantomData<&'a mut T>,
+}
+
+impl<'a, T: Copy> BufMut<'a, T> {
+    /// The buffer shape.
+    pub fn dims(&self) -> &'a [i64] {
+        self.buffer.dims()
+    }
+
+    /// Number of elements.
+    pub fn element_count(&self) -> usize {
+        self.buffer.element_count()
+    }
+
+    /// Mutable view of the data.
+    pub fn as_mut_slice(&mut self) -> &'a mut [T] {
+        self.buffer.as_slice_mut::<T>()
+    }
+}
+
+impl<'a, T: Copy> core::ops::Deref for BufMut<'a, T> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        self.buffer.as_slice::<T>()
+    }
+}
+
+impl<'a, T: Copy> core::ops::DerefMut for BufMut<'a, T> {
+    fn deref_mut(&mut self) -> &mut [T] {
+        self.buffer.as_slice_mut::<T>()
+    }
+}
+
+/// Decode a `Buf` argument at position `i`.
+pub trait DecodeArg<'a>: Sized {
+    /// Decode argument `i` from `frame`.
+    fn decode_arg(frame: &Frame<'a>, i: usize, what: &str) -> Result<Self, ErrorInfo>;
+}
+
+/// Decode a `BufMut` result at position `i`.
+pub trait DecodeRet<'a>: Sized {
+    /// Decode result `i` from `frame`.
+    fn decode_ret(frame: &Frame<'a>, i: usize, what: &str) -> Result<Self, ErrorInfo>;
+}
+
+macro_rules! decode_arg {
+    ($t:ty, $dtype:expr) => {
+        impl<'a> DecodeArg<'a> for Buf<'a, $t> {
+            fn decode_arg(frame: &Frame<'a>, i: usize, what: &str) -> Result<Self, ErrorInfo> {
+                // SAFETY: `frame` is valid per the calling handler's contract.
+                let buffer = unsafe { frame.arg_buffer(i)? };
+                buffer.expect_dtype($dtype, what)?;
+                Ok(Buf {
+                    buffer,
+                    _t: PhantomData,
+                })
+            }
+        }
+    };
+}
+
+macro_rules! decode_ret {
+    ($t:ty, $dtype:expr) => {
+        impl<'a> DecodeRet<'a> for BufMut<'a, $t> {
+            fn decode_ret(frame: &Frame<'a>, i: usize, what: &str) -> Result<Self, ErrorInfo> {
+                // SAFETY: result buffers are uniquely owned by this call.
+                let buffer = unsafe { frame.ret_buffer(i)? };
+                buffer.expect_dtype($dtype, what)?;
+                Ok(BufMut {
+                    buffer,
+                    _t: PhantomData,
+                })
+            }
+        }
+    };
+}
+
+decode_arg!(i32, crate::xla_ffi::dtype::S32);
+decode_arg!(u64, crate::xla_ffi::dtype::U64);
+decode_arg!(f64, crate::xla_ffi::dtype::F64);
+decode_arg!(crate::klu::C64, crate::xla_ffi::dtype::C128);
+
+decode_ret!(i32, crate::xla_ffi::dtype::S32);
+decode_ret!(u64, crate::xla_ffi::dtype::U64);
+decode_ret!(f64, crate::xla_ffi::dtype::F64);
+decode_ret!(crate::klu::C64, crate::xla_ffi::dtype::C128);
 
 #[cfg(test)]
 mod tests {

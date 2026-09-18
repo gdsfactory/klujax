@@ -120,7 +120,17 @@ name = "klujax-ffi"
 version = "0.5.2"
 dependencies = [
  "klu-sys",
+ "klujax-ffi-macros",
  "proptest",
+]
+
+[[package]]
+name = "klujax-ffi-macros"
+version = "0.5.2"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

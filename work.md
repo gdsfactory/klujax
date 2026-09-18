@@ -20,8 +20,9 @@ Repo layout:
 
 ```
 crates/klu-sys/          raw FFI + build.rs (SuiteSparse submodule, cc, static)
-crates/klujax-ffi/src/   xla_ffi.rs, call_frame.rs, error.rs, engine.rs,
-                         handlers.rs, capi.rs, lib.rs
+crates/klujax-ffi/src/   xla_ffi.rs, call_frame.rs, klu.rs, error.rs,
+                         engine.rs, handlers.rs, capi.rs, lib.rs
+crates/klujax-ffi-macros/ internal `#[xla_handler]` proc-macro
 klujax_native/           ctypes loader + capsule providers + handle classes
 ```
 
@@ -291,6 +292,42 @@ no blanket suppression of the doc lints ✓, budget enforced (56) ✓. **Met**
 
 ---
 
+## Enhancement — `#[xla_handler]` proc-macro (post-hardening)
+
+Status: **complete**. `crates/klujax-ffi-macros` provides `#[xla_handler]`,
+which turns a safe function over `Buf`/`BufMut` into an XLA handler.
+
+- [x] New proc-macro crate `klujax-ffi-macros` (`proc-macro = true`;
+      `syn`/`quote`/`proc-macro2`).
+- [x] `call_frame.rs` gained `Buf`/`BufMut` (Deref/DerefMut to `[T]`, plus
+      `.dims()`), and `DecodeArg`/`DecodeRet` traits with dtype-checked impls
+      for `i32`/`u64`/`f64`/`C64`.
+- [x] `#[xla_handler(export = "name")]` or
+      `#[xla_handler(scalars(f64 => "name_f64", C64 => "name_c128"))]`:
+      arguments are decoded in parameter order, results in `BufMut` order; the
+      macro emits the `#[no_mangle] pub unsafe extern "C"` wrapper, the
+      `# Safety` doc, and the `unsafe { guard(...) }` scope. Generic functions
+      are monomorphised per scalar.
+- [x] `handlers.rs` rewritten: 21 symbols from ~11 small safe functions; no
+      positional indices, no manual dtype checks, no hand-written wrappers.
+- [x] Gates: `clippy -D warnings`, 130 pytest, all 21 + 3 symbols via
+      `ffi_smoke`, miri (8), static-link, pre-commit. Unsafe operations 56 → 52.
+
+Example:
+
+```rust
+#[xla_handler(scalars(f64 => "solve_f64", C64 => "solve_c128"))]
+fn solve<T: Scalar>(ai: Buf<i32>, aj: Buf<i32>, ax: Buf<T>, b: Buf<T>, x: BufMut<T>)
+    -> Result<(), ErrorInfo>
+{
+    let (n_lhs, n_col, n_rhs) = dims3(b.dims())?;
+    let out = engine::solve_raw(&ai, &aj, &ax, &b, n_lhs, n_col, n_rhs)?;
+    write(&mut x, &out)
+}
+```
+
+---
+
 ## Verification (must stay green throughout)
 
 ```sh
@@ -324,6 +361,7 @@ unchanged after every stage.
 
 | Date | Change |
 |---|---|
+| 2026-03-21 | Enhancement: added `crates/klujax-ffi-macros` with `#[xla_handler]`; `Buf`/`BufMut` + `DecodeArg`/`DecodeRet` in `call_frame`; rewrote `handlers.rs` (21 symbols from ~11 safe fns). Unsafe operations 56 → 52; all gates + miri green. |
 | 2026-03-21 | Stage 6 (complete): added the safe `klu` wrapper module; rewrote `engine.rs` to `#![forbid(unsafe_code)]`; documented all remaining unsafe in `call_frame`/`error`/`handlers`/`klu-sys`; removed the last doc-lint suppressions; `lib.rs` documents the boundary. Unsafe operations **164 → 56**. All gates + miri green. |
 | 2026-03-21 | Stage 5 (complete): fully defined `klu_symbolic`; added `layout_matches_vendored_header` (compiles `klu.h`, asserts `sizeof`/`offsetof` vs Rust); documented the pinned version in `crates/klu-sys/README.md`; removed the `klu-sys` unsafe-doc allow. All gates green. |
 | 2026-03-21 | Stage 4 (complete): `proptest` for `coo_to_csc` validity + transpose round-trip; `#[cfg(not(miri))]` gates the KLU tests; `just miri` runs 9 pure-Rust tests green (isolation disabled for proptest persistence). All gates green. |
