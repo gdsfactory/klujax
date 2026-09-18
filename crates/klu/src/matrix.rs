@@ -158,6 +158,7 @@ impl<T: Scalar> Csc<T> {
     }
 
     /// Max-norm residual `‖A x − b‖∞` (a small independent sanity check).
+    /// Returns `NaN` if any component of the residual has a `NaN` magnitude.
     pub fn residual(&self, x: &[T], b: &[T]) -> Result<f64> {
         if x.len() != self.n || b.len() != self.n {
             return Err(Error::invalid("x and b must have length n"));
@@ -169,8 +170,72 @@ impl<T: Scalar> Csc<T> {
                 r[i] = T::add(r[i], T::mul(self.ax[k], xj));
             }
         }
-        Ok((0..self.n)
-            .map(|i| T::abs(T::add(r[i], T::neg(b[i]))))
-            .fold(0.0f64, f64::max))
+        let mut norm = 0.0f64;
+        for i in 0..self.n {
+            let magnitude = T::abs(T::add(r[i], T::neg(b[i])));
+            if magnitude.is_nan() {
+                return Ok(f64::NAN);
+            }
+            norm = norm.max(magnitude);
+        }
+        Ok(norm)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::C64;
+
+    #[test]
+    fn residual_preserves_finite_and_infinite_norms() -> Result<()> {
+        let a = Coo::new(2)?.push(0, 0, 2.0)?.push(1, 1, 3.0)?.build()?;
+        assert_eq!(a.residual(&[1.0, 2.0], &[2.0, 6.0])?, 0.0);
+        assert_eq!(a.residual(&[1.0, 2.0], &[5.0, 2.0])?, 4.0);
+        assert_eq!(
+            a.residual(&[f64::INFINITY, 2.0], &[2.0, 6.0])?,
+            f64::INFINITY
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn real_residual_propagates_nan() -> Result<()> {
+        for row in 0..2 {
+            let mut a = Coo::new(2)?.push(0, 0, 1.0)?.push(1, 1, 1.0)?.build()?;
+            let mut invalid = [1.0; 2];
+            invalid[row] = f64::NAN;
+            assert!(a.residual(&invalid, &[1.0; 2])?.is_nan());
+            assert!(a.residual(&[1.0; 2], &invalid)?.is_nan());
+            a.set_values(&invalid)?;
+            assert!(a.residual(&[1.0; 2], &[1.0; 2])?.is_nan());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn complex_residual_propagates_nan() -> Result<()> {
+        let one = C64 { re: 1.0, im: 0.0 };
+        for nan in [
+            C64 {
+                re: f64::NAN,
+                im: 0.0,
+            },
+            C64 {
+                re: 1.0,
+                im: f64::NAN,
+            },
+        ] {
+            for row in 0..2 {
+                let mut a = Coo::new(2)?.push(0, 0, one)?.push(1, 1, one)?.build()?;
+                let mut invalid = [one; 2];
+                invalid[row] = nan;
+                assert!(a.residual(&invalid, &[one; 2])?.is_nan());
+                assert!(a.residual(&[one; 2], &invalid)?.is_nan());
+                a.set_values(&invalid)?;
+                assert!(a.residual(&[one; 2], &[one; 2])?.is_nan());
+            }
+        }
+        Ok(())
     }
 }
