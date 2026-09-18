@@ -1,9 +1,5 @@
-//! Borrowed, lifetime-safe decoding of an [`XLA_FFI_CallFrame`].
-//!
-//! The C++ binding DSL does this implicitly; hand-rolling it means building
-//! slices from raw pointers. To keep that contained, all pointer work lives
-//! here behind [`Frame`]/[`Buffer`]/[`BufferMut`], and every decoded slice is
-//! tied to the frame's lifetime `'a` so it cannot outlive the handler call.
+//! Typed, borrowed views of XLA buffers. Output slots are consumed once, and
+//! mutable slices borrow their owner rather than the entire call-frame lifetime.
 
 use crate::error::ErrorInfo;
 use crate::xla_ffi::{
@@ -12,368 +8,291 @@ use crate::xla_ffi::{
 use core::ffi::{c_int, c_void};
 use core::marker::PhantomData;
 use core::slice;
+use std::cell::RefCell;
+use std::collections::HashSet;
+use std::ops::Range;
 
-/// A borrowed view of the XLA call frame.
-///
-/// `'a` is the handler-invocation lifetime; buffers decoded from it borrow `'a`
-/// and therefore cannot escape the handler.
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for i32 {}
+    impl Sealed for u64 {}
+    impl Sealed for f64 {}
+    impl Sealed for crate::klu::C64 {}
+}
+
+/// The supported XLA scalar layouts. Sealed so safe callers cannot claim an
+/// arbitrary Rust type matches a foreign dtype. All supported types admit zero.
+pub trait Element: sealed::Sealed + Copy {
+    const DTYPE: c_int;
+}
+impl Element for i32 {
+    const DTYPE: c_int = crate::xla_ffi::dtype::S32;
+}
+impl Element for u64 {
+    const DTYPE: c_int = crate::xla_ffi::dtype::U64;
+}
+impl Element for f64 {
+    const DTYPE: c_int = crate::xla_ffi::dtype::F64;
+}
+impl Element for crate::klu::C64 {
+    const DTYPE: c_int = crate::xla_ffi::dtype::C128;
+}
+
+/// A borrowed call frame. Successful output decodes consume their slot for the
+/// whole invocation, even if the returned view is dropped.
 pub struct Frame<'a> {
     raw: *mut XLA_FFI_CallFrame,
+    outputs: RefCell<HashSet<usize>>,
+    regions: RefCell<Vec<(Range<usize>, bool)>>,
     _marker: PhantomData<&'a XLA_FFI_CallFrame>,
 }
 
 impl<'a> Frame<'a> {
-    /// Wrap the raw call frame.
+    /// Borrow a foreign call frame.
     ///
     /// # Safety
-    ///
-    /// `raw` must be the valid, non-null call frame XLA passed to this handler,
-    /// and it must stay alive for the whole (short) `'a`.
+    /// `raw` and its metadata arrays must be valid for `'a`. Each buffer must
+    /// describe a live contiguous allocation of its advertised dtype and size,
+    /// aligned for that dtype. Argument data must be initialized and immutable
+    /// for `'a`; output data must be exclusively available for `'a`. No other
+    /// Frame may decode these outputs during that lifetime. Metadata must not
+    /// overlap output storage. Buffer-to-buffer overlap is checked on decode.
     pub unsafe fn from_raw(raw: *mut XLA_FFI_CallFrame) -> Self {
         Self {
             raw,
+            outputs: RefCell::new(HashSet::new()),
+            regions: RefCell::new(Vec::new()),
             _marker: PhantomData,
         }
     }
 
-    /// The raw pointer, for the error/panic machinery in [`crate::error`].
+    /// The raw pointer for the error machinery.
     pub fn as_ptr(&self) -> *mut XLA_FFI_CallFrame {
         self.raw
     }
 
-    /// Decode argument buffer `i`.
-    ///
-    /// # Safety
-    ///
-    /// The [`Frame::from_raw`] contract must hold (it does inside handlers).
-    pub unsafe fn arg_buffer(&self, i: usize) -> Result<Buffer<'a>, ErrorInfo> {
-        // SAFETY: `self.raw` is valid per `Frame::from_raw`'s contract.
-        let args = unsafe { &(*self.raw).args };
-        if args.args.is_null() || (i as i64) >= args.size {
-            return Err(ErrorInfo::invalid(format!("missing argument {i}")));
+    fn buffer<T: Element>(
+        &self,
+        i: usize,
+        output: bool,
+        what: &str,
+    ) -> Result<Buffer<'a>, ErrorInfo> {
+        if self.raw.is_null() {
+            return Err(ErrorInfo::invalid("null call frame"));
         }
-        // SAFETY: `args.types` has `args.size` entries and `i < size` (checked).
-        if !args.types.is_null() && unsafe { *args.types.add(i) } != XLA_FFI_ARG_TYPE_BUFFER {
-            return Err(ErrorInfo::invalid(format!("argument {i} is not a buffer")));
+        // SAFETY: Frame::from_raw guarantees live frame metadata and arrays.
+        let ptr = unsafe {
+            if output {
+                let rets = &(*self.raw).rets;
+                if rets.rets.is_null() || i as u128 >= rets.size as u128 || rets.size < 0 {
+                    return Err(ErrorInfo::invalid(format!("missing result {i}")));
+                }
+                if rets.types.is_null() || *rets.types.add(i) != XLA_FFI_RET_TYPE_BUFFER {
+                    return Err(ErrorInfo::invalid(format!("result {i} is not a buffer")));
+                }
+                *rets.rets.add(i) as *const XLA_FFI_Buffer
+            } else {
+                let args = &(*self.raw).args;
+                if args.args.is_null() || i as u128 >= args.size as u128 || args.size < 0 {
+                    return Err(ErrorInfo::invalid(format!("missing argument {i}")));
+                }
+                if args.types.is_null() || *args.types.add(i) != XLA_FFI_ARG_TYPE_BUFFER {
+                    return Err(ErrorInfo::invalid(format!("argument {i} is not a buffer")));
+                }
+                *args.args.add(i) as *const XLA_FFI_Buffer
+            }
+        };
+        if ptr.is_null() {
+            return Err(ErrorInfo::invalid(format!("{what} is null")));
         }
-        // SAFETY: `args.args` has `args.size` entries and `i < size` (checked).
-        let ptr = unsafe { *args.args.add(i) } as *const XLA_FFI_Buffer;
-        // SAFETY: `ptr` is the buffer XLA provided for argument `i`, valid for
-        // the call-frame lifetime.
-        unsafe { Buffer::from_ptr(ptr, "argument") }
+        // SAFETY: metadata is valid per Frame::from_raw, and ptr is non-null.
+        let b = unsafe { &*ptr };
+        if b.dtype != T::DTYPE {
+            return Err(ErrorInfo::invalid(format!("{what}: unexpected dtype")));
+        }
+        if b.rank < 0
+            || (b.rank > 0 && b.dims.is_null())
+            || b.rank as u128 > (isize::MAX as usize / size_of::<i64>()) as u128
+        {
+            return Err(ErrorInfo::invalid(format!(
+                "{what}: invalid rank/dimensions"
+            )));
+        }
+        let dims = if b.rank == 0 {
+            &[]
+        } else {
+            // SAFETY: live dimension array per the frame contract; rank checked above.
+            unsafe { slice::from_raw_parts(b.dims, b.rank as usize) }
+        };
+        let len = dims
+            .iter()
+            .try_fold(1usize, |n, &d| {
+                usize::try_from(d).ok().and_then(|d| n.checked_mul(d))
+            })
+            .ok_or_else(|| {
+                ErrorInfo::invalid(format!("{what}: invalid or overflowing dimensions"))
+            })?;
+        let bytes = len
+            .checked_mul(size_of::<T>())
+            .filter(|&n| n <= isize::MAX as usize)
+            .ok_or_else(|| ErrorInfo::invalid("buffer size overflow"))?;
+        let start = b.data as usize;
+        let end = start
+            .checked_add(bytes)
+            .ok_or_else(|| ErrorInfo::invalid("buffer address overflow"))?;
+        if bytes > 0 && (b.data.is_null() || !start.is_multiple_of(align_of::<T>())) {
+            return Err(ErrorInfo::invalid("null or misaligned buffer data"));
+        }
+        if output && self.outputs.borrow().contains(&i) {
+            return Err(ErrorInfo::invalid("result buffer already decoded"));
+        }
+        let mut regions = self.regions.borrow_mut();
+        if bytes > 0
+            && regions
+                .iter()
+                .any(|(r, writable)| (output || *writable) && start < r.end && r.start < end)
+        {
+            return Err(ErrorInfo::invalid("overlapping argument/result buffers"));
+        }
+        if output {
+            self.outputs.borrow_mut().insert(i);
+        }
+        if bytes > 0 {
+            regions.push((start..end, output));
+        }
+        Ok(Buffer {
+            dims,
+            data: b.data,
+            len,
+            _marker: PhantomData,
+        })
     }
 
-    /// Decode result buffer `i`.
-    ///
-    /// # Safety
-    ///
-    /// The [`Frame::from_raw`] contract must hold, and result buffers must be
-    /// uniquely owned for this invocation.
-    pub unsafe fn ret_buffer(&self, i: usize) -> Result<BufferMut<'a>, ErrorInfo> {
-        // SAFETY: `self.raw` is valid per `Frame::from_raw`'s contract.
-        let rets = unsafe { &(*self.raw).rets };
-        if rets.rets.is_null() || (i as i64) >= rets.size {
-            return Err(ErrorInfo::invalid(format!("missing result {i}")));
+    /// Decode an argument after checking its dtype and allocation bounds.
+    pub fn arg_buffer<T: Element>(&self, i: usize) -> Result<Buf<'a, T>, ErrorInfo> {
+        let buffer = self.buffer::<T>(i, false, "argument")?;
+        Ok(Buf {
+            buffer,
+            _t: PhantomData,
+        })
+    }
+
+    /// Consume an output slot and initialize its storage before exposing it as
+    /// Rust values. A second decode of the same slot returns an error.
+    pub fn ret_buffer<T: Element>(&self, i: usize) -> Result<BufMut<'a, T>, ErrorInfo> {
+        let buffer = self.buffer::<T>(i, true, "result")?;
+        if buffer.len > 0 {
+            // SAFETY: buffer is exclusively claimed, aligned, and bounds checked;
+            // all sealed Element types have a valid all-zero representation.
+            unsafe { buffer.data.cast::<T>().write_bytes(0, buffer.len) };
         }
-        // SAFETY: `rets.types` has `rets.size` entries and `i < size` (checked).
-        if !rets.types.is_null() && unsafe { *rets.types.add(i) } != XLA_FFI_RET_TYPE_BUFFER {
-            return Err(ErrorInfo::invalid(format!("result {i} is not a buffer")));
-        }
-        // SAFETY: `rets.rets` has `rets.size` entries and `i < size` (checked).
-        let ptr = unsafe { *rets.rets.add(i) } as *mut XLA_FFI_Buffer;
-        // SAFETY: `ptr` is the result buffer XLA provided for slot `i`, valid
-        // for the call and uniquely owned by this invocation.
-        unsafe { BufferMut::from_ptr(ptr, "result") }
+        Ok(BufMut {
+            buffer,
+            _t: PhantomData,
+        })
     }
 }
 
-/// Decode a raw XLA buffer pointer into its (validated) shape.
-///
-/// # Safety
-///
-/// `ptr` must point to a valid, non-null [`XLA_FFI_Buffer`] whose `dims`/`data`
-/// remain valid for `'a` (i.e. for the call-frame lifetime).
-unsafe fn buffer_parts<'a>(
-    ptr: *const XLA_FFI_Buffer,
-    what: &str,
-) -> Result<(c_int, &'a [i64], *mut c_void), ErrorInfo> {
-    if ptr.is_null() {
-        return Err(ErrorInfo::invalid(format!("{what} is null")));
-    }
-    // SAFETY: `ptr` is non-null (checked) and valid per this fn's contract.
-    let b = unsafe { &*ptr };
-    let dims: &'a [i64] = if b.dims.is_null() || b.rank <= 0 {
-        &[]
-    } else {
-        // SAFETY: for a valid buffer, `b.dims` has `b.rank` entries.
-        unsafe { slice::from_raw_parts(b.dims, b.rank as usize) }
-    };
-    if dims.iter().any(|&d| d < 0) {
-        return Err(ErrorInfo::invalid(format!(
-            "{what} has a negative dimension"
-        )));
-    }
-    Ok((b.dtype, dims, b.data))
-}
-
-/// A read-only view of an XLA argument buffer.
-pub struct Buffer<'a> {
-    dtype: c_int,
+// Private metadata; callers cannot reinterpret it with an arbitrary Rust type.
+struct Buffer<'a> {
     dims: &'a [i64],
-    data: *const c_void,
+    data: *mut c_void,
+    len: usize,
     _marker: PhantomData<&'a [u8]>,
 }
 
-impl<'a> Buffer<'a> {
-    /// # Safety
-    /// See [`buffer_parts`].
-    unsafe fn from_ptr(ptr: *const XLA_FFI_Buffer, what: &str) -> Result<Self, ErrorInfo> {
-        // SAFETY: the caller upholds `buffer_parts`' contract (see `# Safety`).
-        let (dtype, dims, data) = unsafe { buffer_parts(ptr, what)? };
-        Ok(Self {
-            dtype,
-            dims,
-            data: data as *const c_void,
-            _marker: PhantomData,
-        })
-    }
-
-    /// The XLA dtype.
-    pub fn dtype(&self) -> c_int {
-        self.dtype
-    }
-
-    /// The buffer shape (borrowed from the call frame).
-    pub fn dims(&self) -> &'a [i64] {
-        self.dims
-    }
-
-    /// Number of elements.
-    pub fn element_count(&self) -> usize {
-        self.dims.iter().map(|&d| d as usize).product()
-    }
-
-    /// Check the dtype, erroring with `what` for a clear message.
-    pub fn expect_dtype(&self, expected: c_int, what: &str) -> Result<(), ErrorInfo> {
-        if self.dtype != expected {
-            return Err(ErrorInfo::invalid(format!(
-                "{what}: unexpected dtype {}, expected {expected}",
-                self.dtype
-            )));
-        }
-        Ok(())
-    }
-
-    /// Reinterpret the data as `&[T]`.
-    ///
-    /// The caller is responsible for checking the dtype first
-    /// (see [`Buffer::expect_dtype`]).
-    pub fn as_slice<T: Copy>(&self) -> &'a [T] {
-        let n = self.element_count();
-        if self.data.is_null() || n == 0 {
-            return &[];
-        }
-        // SAFETY: `data` points to `n` contiguous elements of `dtype` (the XLA
-        // buffer invariant), and `'a` is bounded by the call-frame lifetime.
-        unsafe { slice::from_raw_parts(self.data as *const T, n) }
-    }
-}
-
-/// A write-only view of an XLA result buffer.
-pub struct BufferMut<'a> {
-    dtype: c_int,
-    dims: &'a [i64],
-    data: *mut c_void,
-    _marker: PhantomData<&'a mut [u8]>,
-}
-
-impl<'a> BufferMut<'a> {
-    /// # Safety
-    /// See [`buffer_parts`]; additionally the buffer must be uniquely owned.
-    unsafe fn from_ptr(ptr: *mut XLA_FFI_Buffer, what: &str) -> Result<Self, ErrorInfo> {
-        // SAFETY: the caller upholds `buffer_parts`' contract (see `# Safety`).
-        let (dtype, dims, data) = unsafe { buffer_parts(ptr as *const XLA_FFI_Buffer, what)? };
-        Ok(Self {
-            dtype,
-            dims,
-            data,
-            _marker: PhantomData,
-        })
-    }
-
-    /// The XLA dtype.
-    pub fn dtype(&self) -> c_int {
-        self.dtype
-    }
-
-    /// The buffer shape.
-    pub fn dims(&self) -> &'a [i64] {
-        self.dims
-    }
-
-    /// Number of elements.
-    pub fn element_count(&self) -> usize {
-        self.dims.iter().map(|&d| d as usize).product()
-    }
-
-    /// Check the dtype.
-    pub fn expect_dtype(&self, expected: c_int, what: &str) -> Result<(), ErrorInfo> {
-        if self.dtype != expected {
-            return Err(ErrorInfo::invalid(format!(
-                "{what}: unexpected dtype {}, expected {expected}",
-                self.dtype
-            )));
-        }
-        Ok(())
-    }
-
-    /// Reinterpret the data as `&mut [T]`.
-    ///
-    /// The caller is responsible for checking the dtype first.
-    pub fn as_slice_mut<T: Copy>(&mut self) -> &'a mut [T] {
-        let n = self.element_count();
-        if self.data.is_null() || n == 0 {
-            return &mut [];
-        }
-        // SAFETY: as `Buffer::as_slice`, plus unique ownership of the result
-        // buffer for this invocation.
-        unsafe { slice::from_raw_parts_mut(self.data as *mut T, n) }
-    }
-
-    /// Read-only view of the result data (used by `Deref`).
-    pub fn as_slice<T: Copy>(&self) -> &'a [T] {
-        let n = self.element_count();
-        if self.data.is_null() || n == 0 {
-            return &[];
-        }
-        // SAFETY: as `Buffer::as_slice`.
-        unsafe { slice::from_raw_parts(self.data as *const T, n) }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Ergonomic decode for the `#[xla_handler]` proc-macro.
-// ---------------------------------------------------------------------------
-
-/// A read-only argument view: `Deref`s to `[T]` and carries its shape.
-pub struct Buf<'a, T> {
+/// A typed shared argument buffer.
+pub struct Buf<'a, T: Element> {
     buffer: Buffer<'a>,
     _t: PhantomData<&'a T>,
 }
-
-impl<'a, T: Copy> Buf<'a, T> {
-    /// The buffer shape.
-    pub fn dims(&self) -> &'a [i64] {
-        self.buffer.dims()
+impl<T: Element> Buf<'_, T> {
+    pub fn dims(&self) -> &[i64] {
+        self.buffer.dims
     }
-
-    /// Number of elements.
     pub fn element_count(&self) -> usize {
-        self.buffer.element_count()
+        self.buffer.len
     }
-
-    /// The decoded slice.
-    pub fn as_slice(&self) -> &'a [T] {
-        self.buffer.as_slice::<T>()
+    pub fn as_slice(&self) -> &[T] {
+        if self.buffer.len == 0 {
+            return &[];
+        }
+        // SAFETY: the sealed dtype and allocation bounds were checked on decode;
+        // Frame guarantees initialized immutable argument storage for this borrow.
+        unsafe { slice::from_raw_parts(self.buffer.data.cast::<T>(), self.buffer.len) }
     }
 }
-
-impl<'a, T: Copy> core::ops::Deref for Buf<'a, T> {
+impl<T: Element> core::ops::Deref for Buf<'_, T> {
     type Target = [T];
     fn deref(&self) -> &[T] {
-        self.buffer.as_slice::<T>()
+        self.as_slice()
     }
 }
 
-/// A write-only result view: `DerefMut`s to `[T]` and carries its shape.
-pub struct BufMut<'a, T> {
-    buffer: BufferMut<'a>,
+/// An exclusively claimed typed result buffer.
+///
+/// Mutable slices cannot outlive the borrow of the owner:
+/// ```compile_fail
+/// use klujax_ffi::call_frame::BufMut;
+/// fn alias<'a>(b: &mut BufMut<'a, f64>) -> (&'a mut [f64], &'a mut [f64]) {
+///     let first = b.as_mut_slice();
+///     let second = b.as_mut_slice();
+///     (first, second)
+/// }
+/// ```
+pub struct BufMut<'a, T: Element> {
+    buffer: Buffer<'a>,
     _t: PhantomData<&'a mut T>,
 }
-
-impl<'a, T: Copy> BufMut<'a, T> {
-    /// The buffer shape.
-    pub fn dims(&self) -> &'a [i64] {
-        self.buffer.dims()
+impl<T: Element> BufMut<'_, T> {
+    pub fn dims(&self) -> &[i64] {
+        self.buffer.dims
     }
-
-    /// Number of elements.
     pub fn element_count(&self) -> usize {
-        self.buffer.element_count()
+        self.buffer.len
     }
-
-    /// Mutable view of the data.
-    pub fn as_mut_slice(&mut self) -> &'a mut [T] {
-        self.buffer.as_slice_mut::<T>()
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        if self.buffer.len == 0 {
+            return &mut [];
+        }
+        // SAFETY: decode claimed this output once and initialized its checked
+        // allocation. The returned slice borrows self exclusively.
+        unsafe { slice::from_raw_parts_mut(self.buffer.data.cast::<T>(), self.buffer.len) }
     }
 }
-
-impl<'a, T: Copy> core::ops::Deref for BufMut<'a, T> {
+impl<T: Element> core::ops::Deref for BufMut<'_, T> {
     type Target = [T];
     fn deref(&self) -> &[T] {
-        self.buffer.as_slice::<T>()
+        if self.buffer.len == 0 {
+            return &[];
+        }
+        // SAFETY: decode checked dtype/bounds and initialized this output. This
+        // shared borrow of self prevents a mutable slice while it is live.
+        unsafe { slice::from_raw_parts(self.buffer.data.cast::<T>(), self.buffer.len) }
     }
 }
-
-impl<'a, T: Copy> core::ops::DerefMut for BufMut<'a, T> {
+impl<T: Element> core::ops::DerefMut for BufMut<'_, T> {
     fn deref_mut(&mut self) -> &mut [T] {
-        self.buffer.as_slice_mut::<T>()
+        self.as_mut_slice()
     }
 }
 
-/// Decode a `Buf` argument at position `i`.
 pub trait DecodeArg<'a>: Sized {
-    /// Decode argument `i` from `frame`.
     fn decode_arg(frame: &Frame<'a>, i: usize, what: &str) -> Result<Self, ErrorInfo>;
 }
-
-/// Decode a `BufMut` result at position `i`.
 pub trait DecodeRet<'a>: Sized {
-    /// Decode result `i` from `frame`.
     fn decode_ret(frame: &Frame<'a>, i: usize, what: &str) -> Result<Self, ErrorInfo>;
 }
-
-macro_rules! decode_arg {
-    ($t:ty, $dtype:expr) => {
-        impl<'a> DecodeArg<'a> for Buf<'a, $t> {
-            fn decode_arg(frame: &Frame<'a>, i: usize, what: &str) -> Result<Self, ErrorInfo> {
-                // SAFETY: `frame` is valid per the calling handler's contract.
-                let buffer = unsafe { frame.arg_buffer(i)? };
-                buffer.expect_dtype($dtype, what)?;
-                Ok(Buf {
-                    buffer,
-                    _t: PhantomData,
-                })
-            }
-        }
-    };
+impl<'a, T: Element> DecodeArg<'a> for Buf<'a, T> {
+    fn decode_arg(frame: &Frame<'a>, i: usize, _what: &str) -> Result<Self, ErrorInfo> {
+        frame.arg_buffer(i)
+    }
 }
-
-macro_rules! decode_ret {
-    ($t:ty, $dtype:expr) => {
-        impl<'a> DecodeRet<'a> for BufMut<'a, $t> {
-            fn decode_ret(frame: &Frame<'a>, i: usize, what: &str) -> Result<Self, ErrorInfo> {
-                // SAFETY: result buffers are uniquely owned by this call.
-                let buffer = unsafe { frame.ret_buffer(i)? };
-                buffer.expect_dtype($dtype, what)?;
-                Ok(BufMut {
-                    buffer,
-                    _t: PhantomData,
-                })
-            }
-        }
-    };
+impl<'a, T: Element> DecodeRet<'a> for BufMut<'a, T> {
+    fn decode_ret(frame: &Frame<'a>, i: usize, _what: &str) -> Result<Self, ErrorInfo> {
+        frame.ret_buffer(i)
+    }
 }
-
-decode_arg!(i32, crate::xla_ffi::dtype::S32);
-decode_arg!(u64, crate::xla_ffi::dtype::U64);
-decode_arg!(f64, crate::xla_ffi::dtype::F64);
-decode_arg!(crate::klu::C64, crate::xla_ffi::dtype::C128);
-
-decode_ret!(i32, crate::xla_ffi::dtype::S32);
-decode_ret!(u64, crate::xla_ffi::dtype::U64);
-decode_ret!(f64, crate::xla_ffi::dtype::F64);
-decode_ret!(crate::klu::C64, crate::xla_ffi::dtype::C128);
 
 #[cfg(test)]
 mod tests {
@@ -447,17 +366,57 @@ mod tests {
         // SAFETY: `raw_frame` is a fully-initialised call frame that outlives
         // `frame` (a local).
         let frame = unsafe { Frame::from_raw(&mut raw_frame) };
-        // SAFETY: the frame references a valid single-argument buffer.
-        unsafe {
-            let b = frame.arg_buffer(0).unwrap();
-            assert_eq!(b.dims(), &[3]);
-            assert_eq!(b.element_count(), 3);
-            assert_eq!(b.dtype(), dtype::S32);
-            assert_eq!(b.as_slice::<i32>(), &[1, 2, 3]);
-            assert!(b.expect_dtype(dtype::S32, "arg").is_ok());
-            assert!(b.expect_dtype(dtype::F64, "arg").is_err());
-            assert!(frame.arg_buffer(1).is_err());
-            assert!(frame.ret_buffer(0).is_err());
+        let b = frame.arg_buffer::<i32>(0).unwrap();
+        assert_eq!(b.dims(), &[3]);
+        assert_eq!(b.element_count(), 3);
+        assert_eq!(b.as_slice(), &[1, 2, 3]);
+        assert!(frame.arg_buffer::<f64>(0).is_err());
+        assert!(frame.arg_buffer::<i32>(1).is_err());
+        assert!(frame.ret_buffer::<i32>(0).is_err());
+    }
+    #[test]
+    fn output_is_typed_initialized_and_consumed_once() {
+        let mut data = [core::mem::MaybeUninit::<f64>::uninit(); 2];
+        let mut dims = [2i64];
+        let mut buffer = XLA_FFI_Buffer {
+            struct_size: size_of::<XLA_FFI_Buffer>(),
+            extension_start: null_mut(),
+            dtype: dtype::F64,
+            data: data.as_mut_ptr().cast(),
+            rank: 1,
+            dims: dims.as_mut_ptr(),
+        };
+        // Two result slots intentionally describe the same storage: the second
+        // must be rejected without creating a second Rust reference.
+        let mut pointers = [&mut buffer as *mut XLA_FFI_Buffer as *mut c_void; 2];
+        let mut types = [XLA_FFI_RET_TYPE_BUFFER; 2];
+        let mut rets = empty_rets();
+        rets.size = 2;
+        rets.types = types.as_mut_ptr();
+        rets.rets = pointers.as_mut_ptr();
+        let mut raw = XLA_FFI_CallFrame {
+            struct_size: size_of::<XLA_FFI_CallFrame>(),
+            extension_start: null_mut(),
+            api: core::ptr::null(),
+            ctx: null_mut(),
+            stage: XLA_FFI_STAGE_EXECUTE,
+            args: empty_args(),
+            rets,
+            attrs: empty_attrs(),
+            future: null_mut(),
+        };
+        // SAFETY: all metadata is live and storage is exclusively available;
+        // result overlap is handled by the decoder before exposing references.
+        let frame = unsafe { Frame::from_raw(&mut raw) };
+        assert!(frame.ret_buffer::<i32>(0).is_err());
+        {
+            let mut out = frame.ret_buffer::<f64>(0).unwrap();
+            assert_eq!(&*out, &[0.0, 0.0]);
+            out.as_mut_slice().copy_from_slice(&[3.0, 4.0]);
+            assert!(frame.ret_buffer::<f64>(0).is_err());
+            assert!(frame.ret_buffer::<f64>(1).is_err());
+            assert_eq!(&*out, &[3.0, 4.0]);
         }
+        assert!(frame.ret_buffer::<f64>(0).is_err());
     }
 }

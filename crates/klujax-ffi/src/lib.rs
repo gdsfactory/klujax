@@ -14,7 +14,7 @@
 //!   SuiteSparse library. Callers get `Result`-returning safe functions.
 //! - [`call_frame`] — decoding `XLA_FFI_CallFrame`. [`call_frame::Frame`] ties
 //!   every decoded slice to the call's lifetime; slices are built only inside
-//!   [`call_frame::Buffer`]/[`call_frame::BufferMut`], which validate rank/dims
+//!   [`call_frame::Buf`]/[`call_frame::BufMut`], which validate rank/dims
 //!   at construction.
 //! - [`error`] — creating `XLA_FFI_Error` values and handling the metadata
 //!   probe.
@@ -22,7 +22,7 @@
 //!   `unsafe { guard(...) }` scope each).
 //!
 //! [`engine`] (the numeric logic) is `#![forbid(unsafe_code)]`. The remaining
-//! unsafe-operation budget (56) is tracked by `tools/unsafe_budget.sh`.
+//! unsafe-operation budget is tracked by `tools/unsafe_budget.sh`.
 
 pub mod call_frame;
 pub mod capi;

@@ -1,32 +1,33 @@
-//! Plain C-ABI symbols called directly from Python via `ctypes` (not XLA).
-//!
-//! These back the pure-Python `KLUSymbolic` / `KLUNumeric` handle classes once
-//! the algorithm is wired up. In Stage 1 they are no-ops.
+//! Plain C-ABI cleanup symbols used by the Python handle owners.
 
 use core::ffi::c_char;
 
-/// Return a static version string. The pointer is valid for the lifetime of the
-/// process.
+/// Return a version string valid for the lifetime of the process.
 #[no_mangle]
 pub extern "C" fn klujax_version() -> *const c_char {
     c"klujax-ffi 0.5.2-rs".as_ptr()
 }
 
-/// Free a single symbolic handle (raw pointer stored as `u64`).
-///
-/// Returns `0` on success. Stage 1: no-op.
+/// Release a symbolic ID. Invalid or already released IDs are harmless.
 #[no_mangle]
-pub extern "C" fn klujax_free_symbolic(_raw: u64) -> i32 {
-    0
+pub extern "C" fn klujax_free_symbolic(raw: u64) -> i32 {
+    crate::engine::free_symbolic_raw(raw)
 }
 
-/// Free `len` numeric handles stored in `ptrs`.
-///
-/// Returns `0` on success. Stage 1: no-op.
+/// Release numeric IDs. Invalid or already released IDs are harmless.
 ///
 /// # Safety
-/// If non-null, `ptrs` must point to `len` valid `u64` values.
+/// For nonzero `len`, `ptrs` must point to `len` initialized, aligned `u64`
+/// values, readable for this call. The slice must fit in `isize::MAX` bytes.
 #[no_mangle]
-pub unsafe extern "C" fn klujax_free_numeric(_ptrs: *const u64, _len: usize) -> i32 {
-    0
+pub unsafe extern "C" fn klujax_free_numeric(ptrs: *const u64, len: usize) -> i32 {
+    if len == 0 {
+        return 0;
+    }
+    if ptrs.is_null() {
+        return -1;
+    }
+    // SAFETY: the caller guarantees a valid slice for the duration of this call.
+    let handles = unsafe { core::slice::from_raw_parts(ptrs, len) };
+    crate::engine::free_numeric_raw(handles)
 }

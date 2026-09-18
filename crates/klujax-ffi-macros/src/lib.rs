@@ -226,16 +226,15 @@ fn expand(args: Args, func: ItemFn) -> syn::Result<proc_macro2::TokenStream> {
         };
 
         let export_ident = Ident::new(&export, Span::call_site());
-        let safety = "`frame_ptr` is the valid, non-null call frame XLA passes to this handler, alive for the duration of the call; the `Buf`/`BufMut` decode checks each argument/result.";
+        let safety = "`frame_ptr` is the valid, non-null call frame XLA passes to this handler, alive for the duration of the call; all metadata and buffer allocations satisfy `Frame::from_raw` (including initialization, validity and exclusive output access); decode checks dtypes, sizes and buffer overlap.";
         wrappers.push(quote! {
+            #[doc = "# Safety"]
+            #[doc = #safety]
             #[no_mangle]
             pub unsafe extern "C" fn #export_ident(
                 frame_ptr: *mut crate::xla_ffi::XLA_FFI_CallFrame,
             ) -> *mut crate::xla_ffi::XLA_FFI_Error {
-                #[doc = ""]
-                #[doc = "# Safety"]
-                #[doc = ""]
-                #[doc = #safety]
+                // SAFETY: the caller guarantees the Frame::from_raw contract.
                 unsafe {
                     // SAFETY: see the `# Safety` doc on this function.
                     crate::error::guard(frame_ptr, || {

@@ -136,44 +136,34 @@ for i in range(100):
     x_i = fast_solve(b_batch[i], numeric, symbolic)
 ```
 
-### Lifecycle & Pointer Pitfalls
+### Handle lifecycle
 
-Because `klujax.analyze` and `klujax.factor` generate `KLUHandleManager` objects which wrap low level C++ pointers, there are strict rules for avoiding memory leaks and segmentation faults.
-
-#### The "Ghost Pointer" Problem inside JIT:
-
-JAX's jit works by tracing your code. During tracing, Python objects like the `KLUHandleManager` are converted into symbolic Tracers.
-
-- Outside JIT: The `KLUHandleManager` uses RAII (Resource Acquisition Is Initialization). When the Python variable is deleted or goes out of scope, the C++ memory is freed automatically.
-
-- Inside JIT: If you create a handle (via `analyze` or `factor`) **inside** a JIT-compiled function, the Python manager is "lost" during the conversion to XLA. XLA will allocate the C++ memory at runtime, but it will **never** call the free function.
-
-#### The Fix: Explicit Destruction with Dependencies
-
-If you must create a handle inside JIT, you must manually call `free_symbolic` or `free_numeric` inside that same function. To prevent the compiler from freeing the pointer before the solve is finished, you must pass the solution as a dependency.
+`analyze` returns a `KLUSymbolic` owner; `factor` returns a `KLUNumeric`
+owner. Both hold opaque `uint64` IDs into the Rust handle registry, not memory
+addresses. Create these owners outside JIT, keep them alive while using them,
+and close them explicitly or with a context manager:
 
 ```python
-@jax.jit
-def dynamic_solve(Ai, Aj, Ax, b):
-    # 1. Born inside JIT (No automatic cleanup!)
-    sym = klujax.analyze(Ai, Aj, 5)
-
-    # 2. Compute solution
-    x = klujax.solve_with_symbol(Ai, Aj, Ax, b, sym)
-
-    # 3. CRITICAL: Force XLA to free 'sym' ONLY AFTER 'x' is ready
-    klujax.free_symbolic(sym, dependency=x)
-
-    return x
+with klujax.analyze(Ai, Aj, n_col) as symbolic:
+    with klujax.factor(Ai, Aj, Ax, symbolic) as numeric:
+        x = klujax.solve_with_numeric(numeric, b, symbolic)
+        x.block_until_ready()
 ```
 
-#### Summary of Best Practices
+Wait for asynchronous JAX results before closing their handles. Garbage
+collection also releases the native allocation. Repeated `close()` calls are
+harmless; closed handles and stale IDs raise errors. Handle owners cannot be
+copied, deep-copied, or serialized.
 
-1. **Hoist Creations**: Always try to call analyze or factor outside of JIT blocks.
+Rust checks each handle's kind, scalar type, matrix pattern and RHS dimensions.
+An operation already using an allocation keeps it alive through completion;
+new lookups fail after close. Calls sharing a symbolic handle are serialized,
+while independent symbolic handles can run concurrently.
 
-2. **One Manager, One Free**: Do not manually call free_symbolic(manager) and then let the manager go out of scope; it will attempt a double-free (though the library has safeguards to prevent a crash).
-
-3. **Check for Warnings**: If you see a UserWarning: Allocating KLU handle inside JIT, your code is currently leaking memory. Use the dependency pattern shown above to fix it.
+Creating handles inside JIT returns arrays without a Python owner. The deprecated
+`free_symbolic` / `free_numeric` helpers only close Python owners; they do not
+schedule cleanup for traced arrays. For a complete solve inside JIT, use
+`klujax.solve`, which manages its temporary native allocations internally.
 
 ## Installation
 

@@ -77,6 +77,22 @@ pub fn coo_to_csc(
     for val in bp.iter_mut() {
         std::mem::swap(val, &mut last);
     }
+    // Canonicalize rows so analysis and factorization agree even when their
+    // COO inputs arrive in different orders.
+    for col in 0..n_col {
+        let lo = bp[col] as usize;
+        let hi = bp[col + 1] as usize;
+        let mut entries: Vec<_> = bi[lo..hi]
+            .iter()
+            .copied()
+            .zip(bk[lo..hi].iter().copied())
+            .collect();
+        entries.sort_unstable_by_key(|&(row, _)| row);
+        for (k, (row, original)) in (lo..hi).zip(entries) {
+            bi[k] = row;
+            bk[k] = original;
+        }
+    }
     (bi, bp, bk)
 }
 
@@ -89,6 +105,9 @@ pub fn validate(
     n_rhs: usize,
     n_nz: usize,
 ) -> Result<(), ErrorInfo> {
+    if n_col > i32::MAX as usize || n_nz > i32::MAX as usize {
+        return Err(ErrorInfo::invalid("matrix exceeds KLU int32 dimensions"));
+    }
     if ai.len() != n_nz {
         return Err(ErrorInfo::invalid(
             "n_nz mismatch: Ai.shape[0] != Ax.shape[1]",
@@ -117,7 +136,7 @@ pub fn validate(
     Ok(())
 }
 
-/// Symbolic analysis; returns the raw `klu_symbolic*` as `u64`.
+/// Symbolic analysis; returns an opaque symbolic ID as `u64`.
 pub fn analyze_raw(n_col: usize, ai: &[i32], aj: &[i32]) -> Result<u64, ErrorInfo> {
     let n_nz = ai.len();
     validate(ai, aj, 1, n_col, 1, n_nz)?;
@@ -125,12 +144,17 @@ pub fn analyze_raw(n_col: usize, ai: &[i32], aj: &[i32]) -> Result<u64, ErrorInf
     klu::analyze(n_col, &mut bp, &mut bi)
 }
 
-/// Numeric factorization of one matrix; returns the raw `klu_numeric*` as `u64`.
+/// Numeric factorization of one matrix; returns an opaque numeric ID as `u64`.
 pub fn factor_raw<T: Scalar>(ai: &[i32], aj: &[i32], ax: &[T], sym: u64) -> Result<u64, ErrorInfo> {
     let n_col = klu::symbolic_n(sym)?;
     let n_nz = ai.len();
     validate(ai, aj, 1, n_col, 1, n_nz)?;
     let (mut bi, mut bp, bk) = coo_to_csc(n_col, n_nz, ai, aj);
+    if ax.len() != n_nz {
+        return Err(ErrorInfo::invalid(
+            "matrix value count does not match pattern",
+        ));
+    }
     let mut bx: Vec<T> = bk.iter().map(|&k| ax[k as usize]).collect();
     let mut common = Common::new();
     klu::factor(&mut common, &mut bp, &mut bi, &mut bx, sym)
@@ -146,6 +170,11 @@ pub fn factor_batch_raw<T: Scalar>(
 ) -> Result<Vec<u64>, ErrorInfo> {
     let n_col = klu::symbolic_n(sym)?;
     let n_nz = ai.len();
+    if n_nz.checked_mul(n_lhs) != Some(ax.len()) {
+        return Err(ErrorInfo::invalid(
+            "matrix value count does not match batch/pattern",
+        ));
+    }
     validate(ai, aj, n_lhs, n_col, 1, n_nz)?;
     let (mut bi, mut bp, bk) = coo_to_csc(n_col, n_nz, ai, aj);
     let mut common = Common::new();
@@ -177,6 +206,11 @@ pub fn refactor_batch_raw<T: Scalar>(
 ) -> Result<Vec<u64>, ErrorInfo> {
     let n_col = klu::symbolic_n(sym)?;
     let n_nz = ai.len();
+    if n_nz.checked_mul(n_lhs) != Some(ax.len()) {
+        return Err(ErrorInfo::invalid(
+            "matrix value count does not match batch/pattern",
+        ));
+    }
     validate(ai, aj, n_lhs, n_col, 1, n_nz)?;
     if numeric.len() != n_lhs {
         return Err(ErrorInfo::invalid("numeric array size must match n_lhs"));

@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Floris Laporte
+
 """Location of the compiled Rust ``klujax-ffi`` cdylib plus a pure-Python shim
 of the former pybind11 module (``klujax_cpp``).
 
@@ -15,6 +17,7 @@ from __future__ import annotations
 import ctypes
 import sys
 from pathlib import Path
+from threading import Lock
 
 _NAME = {
     "darwin": "libklujax_ffi.dylib",
@@ -175,27 +178,50 @@ def analyze():
     return _capsule("analyze")
 
 
-class KLUSymbolic:
-    """Symbolic analysis handle (owns a ``klu_symbolic*`` stored as ``u64``)."""
+class _HandleOwner:
+    __slots__ = ()
 
-    __slots__ = ("_closed", "_raw")
+    def __copy__(self):
+        msg = "KLU handle owners cannot be copied"
+        raise TypeError(msg)
+
+    def __deepcopy__(self, _memo):
+        return self.__copy__()
+
+    def __reduce_ex__(self, _protocol):
+        msg = "KLU handle owners cannot be serialized"
+        raise TypeError(msg)
+
+
+class KLUSymbolic(_HandleOwner):
+    """Symbolic analysis handle (owns an opaque native ``u64`` ID)."""
+
+    __slots__ = ("_closed", "_lock", "_raw")
 
     def __init__(self, raw: int) -> None:
         self._raw = int(raw)
+        self._lock = Lock()
         self._closed = False
 
     @property
     def raw(self) -> int:
-        return self._raw
+        with self._lock:
+            if self._closed:
+                msg = "symbolic handle is closed"
+                raise RuntimeError(msg)
+            return self._raw
 
     @property
     def handle(self) -> KLUSymbolic:
         return self
 
     def close(self) -> None:
-        if not self._closed:
-            lib().klujax_free_symbolic(ctypes.c_uint64(self._raw))
-            self._closed = True
+        with self._lock:
+            if not self._closed:
+                raw = self._raw
+                self._raw = 0
+                self._closed = True
+                lib().klujax_free_symbolic(ctypes.c_uint64(raw))
 
     def __enter__(self) -> KLUSymbolic:
         return self
@@ -210,13 +236,14 @@ class KLUSymbolic:
             pass
 
 
-class KLUNumeric:
-    """Numeric factorization handle (owns one ``klu_numeric*`` per batch)."""
+class KLUNumeric(_HandleOwner):
+    """Numeric factorization handle (owns one opaque native ID per batch)."""
 
-    __slots__ = ("_closed", "_handles")
+    __slots__ = ("_closed", "_handles", "_lock")
 
     def __init__(self, handles) -> None:
         self._handles = [int(h) for h in handles]
+        self._lock = Lock()
         self._closed = False
 
     @property
@@ -224,13 +251,21 @@ class KLUNumeric:
         return len(self._handles)
 
     def as_list(self) -> list[int]:
-        return list(self._handles)
+        with self._lock:
+            if self._closed:
+                msg = "numeric handle is closed"
+                raise RuntimeError(msg)
+            return list(self._handles)
 
     def close(self) -> None:
-        if not self._closed and self._handles:
-            arr = (ctypes.c_uint64 * len(self._handles))(*self._handles)
-            lib().klujax_free_numeric(arr, len(self._handles))
-            self._closed = True
+        with self._lock:
+            if not self._closed:
+                handles = self._handles
+                self._handles = []
+                self._closed = True
+                if handles:
+                    arr = (ctypes.c_uint64 * len(handles))(*handles)
+                    lib().klujax_free_numeric(arr, len(handles))
 
     def __enter__(self) -> KLUNumeric:
         return self

@@ -74,7 +74,7 @@ pub struct klu_common {
 }
 
 extern "C" {
-    pub fn klu_defaults(common: *mut klu_common);
+    pub fn klu_defaults(common: *mut klu_common) -> c_int;
 
     pub fn klu_analyze(
         n: c_int,
@@ -122,6 +122,8 @@ extern "C" {
 
     pub fn klu_free_numeric(numeric: *mut *mut klu_numeric, common: *mut klu_common) -> c_int;
 
+    pub fn klu_z_free_numeric(numeric: *mut *mut klu_numeric, common: *mut klu_common) -> c_int;
+
     // Complex variants operate on interleaved `double` arrays.
     pub fn klu_z_factor(
         ap: *mut c_int,
@@ -166,9 +168,10 @@ mod tests {
     use core::mem::MaybeUninit;
 
     fn new_common() -> klu_common {
-        // SAFETY: `klu_defaults` fully initialises the struct in place.
+        // SAFETY: zero initializes every field (including singular_col, which
+        // klu_defaults leaves untouched); defaults writes valid field values.
         unsafe {
-            let mut common = MaybeUninit::<klu_common>::uninit();
+            let mut common = MaybeUninit::<klu_common>::zeroed();
             klu_defaults(common.as_mut_ptr());
             common.assume_init()
         }
