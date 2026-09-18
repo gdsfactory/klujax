@@ -40,6 +40,10 @@ impl Element for crate::klu::C64 {
 
 /// A borrowed call frame. Successful output decodes consume their slot for the
 /// whole invocation, even if the returned view is dropped.
+///
+/// Slot and overlap checks are local to this instance. The unsafe constructor's
+/// one-Frame-per-call obligation prevents aliasing across separate instances;
+/// neither the borrow checker nor these runtime checks enforce that obligation.
 pub struct Frame<'a> {
     raw: *mut XLA_FFI_CallFrame,
     outputs: RefCell<HashSet<usize>>,
@@ -54,9 +58,14 @@ impl<'a> Frame<'a> {
     /// `raw` and its metadata arrays must be valid for `'a`. Each buffer must
     /// describe a live contiguous allocation of its advertised dtype and size,
     /// aligned for that dtype. Argument data must be initialized and immutable
-    /// for `'a`; output data must be exclusively available for `'a`. No other
-    /// Frame may decode these outputs during that lifetime. Metadata must not
-    /// overlap output storage. Buffer-to-buffer overlap is checked on decode.
+    /// for `'a`; output data must be exclusively available for `'a`. Construct
+    /// exactly one Frame per invocation and share it for all argument/result
+    /// decoding, as the generated FFI wrappers do. Do not construct another Frame
+    /// over the same raw pointer (or overlapping buffer storage) during `'a`,
+    /// even after dropping this Frame: decoded views can outlive it. Otherwise,
+    /// separate Frames could each return a mutable view of the same allocation.
+    /// Metadata must not overlap output storage. Buffer-to-buffer overlap is
+    /// checked on decode only within this Frame.
     pub unsafe fn from_raw(raw: *mut XLA_FFI_CallFrame) -> Self {
         Self {
             raw,
@@ -231,13 +240,15 @@ impl<T: Element> core::ops::Deref for Buf<'_, T> {
 
 /// An exclusively claimed typed result buffer.
 ///
-/// Mutable slices cannot outlive the borrow of the owner:
-/// ```compile_fail
+/// One owner cannot yield two simultaneously live mutable slices. This checks
+/// borrowing within a single BufMut, not the unsafe Frame construction contract:
+/// ```compile_fail,E0499
 /// use klujax_ffi::call_frame::BufMut;
-/// fn alias<'a>(b: &mut BufMut<'a, f64>) -> (&'a mut [f64], &'a mut [f64]) {
+/// fn alias(b: &mut BufMut<'_, f64>) {
 ///     let first = b.as_mut_slice();
 ///     let second = b.as_mut_slice();
-///     (first, second)
+///     //~^ ERROR cannot borrow `*b` as mutable more than once at a time
+///     first[0] = second[0];
 /// }
 /// ```
 pub struct BufMut<'a, T: Element> {

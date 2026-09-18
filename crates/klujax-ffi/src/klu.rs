@@ -355,6 +355,8 @@ enum Entry {
     },
     Numeric {
         ptr: *mut klu_numeric,
+        // Identity only: numeric cleanup is independent of the symbolic's
+        // lifetime. Solve/refactor must look up and retain both live entries.
         symbolic: u64,
         complex: bool,
         usable: bool,
@@ -678,6 +680,45 @@ mod tests {
     #[test]
     fn defaults_initialize_singular_column() {
         assert_eq!(Common::new().0.singular_col, 0);
+    }
+
+    fn numeric_outlives_symbolic<T: Scalar + std::fmt::Debug + PartialEq>(mut values: [T; 2]) {
+        let mut common = Common::new();
+        let (mut bp, mut bi) = ([0, 1, 2], [0, 1]);
+        let sym = analyze(2, &mut bp, &mut bi).unwrap();
+        let num = factor(&mut common, &mut bp, &mut bi, &mut values, sym).unwrap();
+        let weak_sym = Arc::downgrade(&lookup(sym).unwrap());
+        let weak_num = Arc::downgrade(&lookup(num).unwrap());
+
+        free_symbolic(&mut common, sym);
+        assert!(lookup(sym).is_err());
+        assert!(weak_sym.upgrade().is_none());
+        assert!(weak_num.upgrade().is_some());
+
+        for transpose in [false, true] {
+            let mut rhs = values;
+            let error = solve(&mut common, sym, num, 2, 1, &mut rhs, transpose).unwrap_err();
+            assert_eq!(
+                error.message.to_str().unwrap(),
+                "invalid or closed KLU handle"
+            );
+            assert_eq!(rhs, values);
+        }
+
+        free_numeric(&mut common, num);
+        assert!(lookup(num).is_err());
+        assert!(weak_num.upgrade().is_none());
+        free_numeric(&mut common, num);
+    }
+
+    #[test]
+    fn real_numeric_can_be_freed_after_symbolic_and_rejects_solve() {
+        numeric_outlives_symbolic([2.0, 4.0]);
+    }
+
+    #[test]
+    fn complex_numeric_can_be_freed_after_symbolic_and_rejects_solve() {
+        numeric_outlives_symbolic([C64 { re: 2.0, im: 1.0 }, C64 { re: 4.0, im: -1.0 }]);
     }
 
     #[test]
