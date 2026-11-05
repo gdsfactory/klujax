@@ -150,22 +150,32 @@ JAX's jit works by tracing your code. During tracing, Python objects like the `K
 
 #### The Fix: Explicit Destruction with Dependencies
 
-If you must create a handle inside JIT, you must manually call `free_symbolic` or `free_numeric` inside that same function. To prevent the compiler from freeing the pointer before the solve is finished, you must pass the solution as a dependency.
+Create symbolic analyses eagerly and keep their owners alive until compiled work
+has completed. Numeric factorizations created inside `jit` or `vmap` return raw
+handles: free each one exactly once with `free_numeric`, passing **all** consumer
+results in `dependency`. A tuple or other pytree can include multiple solves.
+The free executes even when its returned status is ignored. Do not reuse a freed
+handle, or free a shared handle separately in each mapped lane.
 
 ```python
+symbolic = klujax.analyze(Ai, Aj, n_col)
+
 @jax.jit
-def dynamic_solve(Ai, Aj, Ax, b):
-    # 1. Born inside JIT (No automatic cleanup!)
-    sym = klujax.analyze(Ai, Aj, 5)
-
-    # 2. Compute solution
-    x = klujax.solve_with_symbol(Ai, Aj, Ax, b, sym)
-
-    # 3. CRITICAL: Force XLA to free 'sym' ONLY AFTER 'x' is ready
-    klujax.free_symbolic(sym, dependency=x)
-
+def dynamic_solve(values, b):
+    numeric = klujax.factor(Ai, Aj, values, symbolic)
+    x = klujax.solve_with_numeric(numeric, b, symbolic)
+    klujax.free_numeric(numeric, dependency=x)
     return x
+
+x = dynamic_solve(Ax, b)
+x.block_until_ready()
 ```
+
+`free_numeric` is supported for raw handles; only its eager RAII-owner form is
+deprecated. For eager owners, synchronize consumers and call `close()` outside
+compiled code. Omitting the free for a raw handle still leaks native memory.
+For a single solve per factorization, `solve_with_symbol` manages the temporary
+numeric storage internally.
 
 #### Summary of Best Practices
 

@@ -1,6 +1,7 @@
 // version: 0.5.1
 // Imports
 
+#include <atomic>
 #include <cmath>
 #include <complex>
 #include <cstdint>
@@ -15,6 +16,10 @@
 
 namespace py = pybind11;
 namespace ffi = xla::ffi;
+
+// Split numeric allocations only; fused solves own and free their temporaries.
+static std::atomic<int64_t> live_numeric_allocations{0};
+static std::atomic<uint64_t> total_numeric_allocations{0};
 
 ffi::Error validate_args(
     const ffi::Buffer<ffi::DataType::S32>& Ai,
@@ -686,10 +691,13 @@ ffi::Error factor_impl(
             for (int j = 0; j < i; j++) {
                 klu_numeric* num = reinterpret_cast<klu_numeric*>(_numeric[j]);
                 klu_free_numeric(&num, &Common);
+                --live_numeric_allocations;
             }
             return ffi::Error::InvalidArgument("klu_factor/z_factor failed (singular matrix?)");
         }
         _numeric[i] = reinterpret_cast<uint64_t>(Numeric);
+        ++live_numeric_allocations;
+        ++total_numeric_allocations;
     }
     return ffi::Error::Success();
 }
@@ -1274,6 +1282,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
 
 ffi::Error free_numeric(
     const ffi::Buffer<ffi::DataType::U64> numeric,
+    ffi::RemainingArgs dependencies,
     ffi::Result<ffi::Buffer<ffi::DataType::S32>> status) {
     int n = numeric.element_count();
     const uint64_t* _numeric = numeric.typed_data();
@@ -1286,6 +1295,7 @@ ffi::Error free_numeric(
         if (addr != 0) {
             klu_numeric* Numeric = reinterpret_cast<klu_numeric*>(addr);
             klu_free_numeric(&Numeric, &Common);
+            --live_numeric_allocations;
         }
     }
 
@@ -1320,6 +1330,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
     free_numeric_handler, free_numeric,
     ffi::Ffi::Bind()
         .Arg<ffi::Buffer<ffi::DataType::U64>>()  // numeric
+        .RemainingArgs()                         // consumer results establish execution dependencies
         .Ret<ffi::Buffer<ffi::DataType::S32>>()  // status (instead of no return)
 );
 
@@ -1374,6 +1385,7 @@ struct KLUNumeric {
                 if (addr != 0) {
                     auto* num = reinterpret_cast<klu_numeric*>(addr);
                     klu_free_numeric(&num, &common);
+                    --live_numeric_allocations;
                 }
             }
             ptrs.clear();
@@ -1482,6 +1494,10 @@ PYBIND11_MODULE(klujax_cpp, m) {
           []() { return py::capsule((void*)&refactor_and_solve_f64_handler); });
     m.def("refactor_and_solve_c128",
           []() { return py::capsule((void*)&refactor_and_solve_c128_handler); });
+
+    m.def("_numeric_allocation_counts", []() {
+        return py::make_tuple(live_numeric_allocations.load(), total_numeric_allocations.load());
+    });
 
     py::class_<KLUSymbolic>(m, "KLUSymbolic")
         .def(py::init<uint64_t>())

@@ -36,6 +36,8 @@ import jax.extend.core
 import jax.numpy as jnp
 import klujax_cpp  # ty: ignore[unresolved-import]
 import numpy as np
+from jax._src import core as jax_core
+from jax._src import effects
 from jax.core import ShapedArray
 from jax.interpreters import ad, batching, mlir
 from jaxtyping import Array
@@ -217,15 +219,36 @@ def free_symbolic(symbolic: Any, dependency: Any = None) -> Array:  # noqa: ANN4
 
 
 def free_numeric(numeric: Any, dependency: Any = None) -> Array:  # noqa: ANN401
-    """Free a KLU handle (deprecated — handles are freed automatically)."""
-    warnings.warn(
-        "free_numeric is deprecated; handles are freed automatically",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    if hasattr(numeric, "close"):
+    """Free numeric storage after all consumers in ``dependency`` have completed.
+
+    Raw handles created by factor inside jit/vmap must be freed exactly once.
+    Pass every consumer result as an array or pytree in dependency. The free is
+    retained even when its returned status is unused. Eager RAII owners should
+    instead use close() after synchronizing their consumers.
+    """
+    if isinstance(numeric, klujax_cpp.KLUNumeric):
+        if not jax_core.trace_state_clean():
+            msg = (
+                "Close eager numeric owners outside jit/vmap "
+                "after synchronizing consumers"
+            )
+            raise ValueError(msg)
+        warnings.warn(
+            "free_numeric is deprecated for RAII owners; use close()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        if dependency is not None:
+            jax.block_until_ready(dependency)
         numeric.close()
-    return jnp.array(0, dtype=jnp.int32)
+        return jnp.array(0, dtype=jnp.int32)
+    if dependency is None:
+        msg = "Raw numeric handles require dependency containing all consumer results"
+        raise ValueError(msg)
+    # The native handler ignores the values, but XLA must materialize every
+    # operand before freeing. Flattening also supports multiple consumer results.
+    leaves = jax.tree_util.tree_leaves(dependency)
+    return free_numeric_p.bind(jnp.asarray(numeric, dtype=jnp.uint64), *leaves)
 
 
 # Split Solve routines =============================================================
@@ -400,7 +423,8 @@ def factor(
 
     Returns:
         numeric: [KLUNumeric]: the numeric factorization object (freed automatically).
-            Inside vmap, returns a raw array — RAII cannot wrap traced values.
+            Inside jit/vmap, returns a raw array. Call free_numeric exactly once
+            with all consumer results in dependency before leaving that region.
 
     """
     sym_h = _get_symbolic_handle(symbolic)
@@ -573,6 +597,17 @@ def refactor_and_solve(
 
 # Primitives ==========================================================================
 
+
+class _NumericAllocationEffect(effects.Effect):
+    """Native allocation/free must survive JAX dead-code elimination."""
+
+
+effects.lowerable_effects.add_type(_NumericAllocationEffect)
+effects.control_flow_allowed_effects.add_type(_NumericAllocationEffect)
+_numeric_allocation_effect = _NumericAllocationEffect()
+free_numeric_p = jax.extend.core.Primitive("free_numeric")
+
+
 dot_f64 = jax.extend.core.Primitive("dot_f64")
 dot_c128 = jax.extend.core.Primitive("dot_c128")
 solve_f64 = jax.extend.core.Primitive("solve_f64")
@@ -654,14 +689,22 @@ def analyze_impl(Ai: Array, Aj: Array, n_col: Array) -> Array:
 @factor_f64.def_impl
 def factor_f64_impl(Ai, Aj, Ax, symbolic):
     n_lhs = Ax.shape[0]
-    call = jax.ffi.ffi_call("factor_f64", jax.ShapeDtypeStruct((n_lhs,), jnp.uint64))
+    call = jax.ffi.ffi_call(
+        "factor_f64",
+        jax.ShapeDtypeStruct((n_lhs,), jnp.uint64),
+        has_side_effect=True,
+    )
     return call(Ai, Aj, Ax, symbolic)
 
 
 @factor_c128.def_impl
 def factor_c128_impl(Ai, Aj, Ax, symbolic):
     n_lhs = Ax.shape[0]
-    call = jax.ffi.ffi_call("factor_c128", jax.ShapeDtypeStruct((n_lhs,), jnp.uint64))
+    call = jax.ffi.ffi_call(
+        "factor_c128",
+        jax.ShapeDtypeStruct((n_lhs,), jnp.uint64),
+        has_side_effect=True,
+    )
     return call(Ai, Aj, Ax, symbolic)
 
 
@@ -748,6 +791,36 @@ def general_impl(
         msg = "jax.ffi.ffi_call did not return a callable."
         raise RuntimeError(msg)  # noqa: TRY004
     return call(Ai, Aj, Ax, x, *args)
+
+
+@free_numeric_p.def_impl
+def free_numeric_impl(numeric, *dependencies: Array):
+    return jax.ffi.ffi_call(
+        "free_numeric",
+        jax.ShapeDtypeStruct((), jnp.int32),
+        has_side_effect=True,
+    )(numeric, *dependencies)
+
+
+@free_numeric_p.def_effectful_abstract_eval
+def free_numeric_abstract_eval(numeric, *dependencies: Array):
+    return ShapedArray((), jnp.int32), {_numeric_allocation_effect}
+
+
+def free_numeric_batch(args, axes):
+    # Each mapped allocation is distinct. Free the whole buffer in one call;
+    # dependencies may be batched or shared and only supply ordering edges.
+    if axes[0] is None:
+        msg = "Cannot vmap free_numeric over a shared numeric handle"
+        raise ValueError(msg)
+    return free_numeric_p.bind(*args), None
+
+
+batching.primitive_batchers[free_numeric_p] = free_numeric_batch
+jax.ffi.register_ffi_target("free_numeric", klujax_cpp.free_numeric(), platform="cpu")
+mlir.register_lowering(
+    free_numeric_p, mlir.lower_fun(free_numeric_impl, multiple_results=False)
+)
 
 
 # Lowerings ===========================================================================
@@ -927,10 +1000,10 @@ def analyze_abstract_eval(Ai: Array, Aj: Array, n_col: Array) -> ShapedArray:
     return ShapedArray((), jnp.uint64)
 
 
-@factor_f64.def_abstract_eval
-@factor_c128.def_abstract_eval
+@factor_f64.def_effectful_abstract_eval
+@factor_c128.def_effectful_abstract_eval
 def factor_abstract_eval(Ai, Aj, Ax, symbolic):
-    return ShapedArray((Ax.shape[0],), jnp.uint64)
+    return ShapedArray((Ax.shape[0],), jnp.uint64), {_numeric_allocation_effect}
 
 
 @refactor_f64.def_abstract_eval

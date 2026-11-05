@@ -260,7 +260,9 @@ def test_solve_with_numeric_vmap_1d_b(dtype):
 
     def solve_one(Ax_i):
         num = klujax.factor(Ai, Aj, Ax_i, symbolic)
-        return klujax.solve_with_numeric(num, b, symbolic)
+        x = klujax.solve_with_numeric(num, b, symbolic)
+        klujax.free_numeric(num, dependency=x)
+        return x
 
     x_sp = jax.vmap(solve_one)(Ax_batch)
 
@@ -730,3 +732,114 @@ def test_no_leak_numeric():
     assert rss_after - rss_before < 10_000, (
         f"RSS grew by {rss_after - rss_before} KB after 5000 factor() calls"
     )
+
+
+@pytest.mark.parametrize("dtype", [np.float64, np.complex128])
+@pytest.mark.parametrize("constant_values", [False, True])
+@pytest.mark.parametrize("consume_result", [False, True])
+@pytest.mark.parametrize("multiple_consumers", [False, True])
+def test_compiled_numeric_lifetime(
+    dtype, constant_values, consume_result, multiple_consumers
+):
+    """Allocation/free survive DCE and execute once per dynamic loop iteration."""
+    Ai, Aj, Ax, b = _get_rand_arrs_1d(100, 32, dtype=dtype)
+    sym = klujax.analyze(Ai, Aj, 32)
+    A = jnp.zeros((32, 32), dtype=dtype).at[Ai, Aj].add(Ax)
+    expected = jsp.linalg.solve(A, b)[0]
+    expected_t = jsp.linalg.solve(A.T, 2 * b)[0] if multiple_consumers else 0
+
+    @jax.jit
+    def run(n_iter, values):
+        def body(i, acc):
+            scale = 1.0 if constant_values else 1 + 1e-6 * i
+            num = klujax.factor(Ai, Aj, values * scale, sym)
+            x = klujax.solve_with_numeric(num, b, sym)
+            y = (
+                klujax.tsolve_with_numeric(num, 2 * b, sym)
+                if multiple_consumers
+                else jnp.zeros_like(x)
+            )
+            # The status is deliberately unused, matching issue #36.
+            dependency = {"normal": x, "transpose": y} if multiple_consumers else x
+            klujax.free_numeric(num, dependency=dependency)
+            return acc + x[0] + y[0] if consume_result else acc
+
+        return lax.fori_loop(0, n_iter, body, jnp.zeros((), dtype=dtype))
+
+    run(1, Ax).block_until_ready()
+    gc.collect()
+    live_before, total_before = klujax.klujax_cpp._numeric_allocation_counts()
+    for n_iter in (0, 100, 1000, 3000):
+        result = run(n_iter, Ax).block_until_ready()
+        scales = 1.0 if constant_values else 1 + 1e-6 * np.arange(n_iter)
+        reference = (expected + expected_t) * np.sum(np.ones(n_iter) / scales)
+        np.testing.assert_allclose(
+            result, reference if consume_result else 0, rtol=1e-10
+        )
+        live, total = klujax.klujax_cpp._numeric_allocation_counts()
+        assert live == live_before
+        assert total - total_before == n_iter
+        total_before = total
+
+
+@pytest.mark.parametrize("dtype", [np.float64, np.complex128])
+@pytest.mark.parametrize("mapped", [False, True])
+def test_compiled_numeric_lifetime_batched(dtype, mapped):
+    Ai, Aj, Ax, b = _get_rand_arrs_1d(15, 5, dtype=dtype)
+    sym = klujax.analyze(Ai, Aj, 5)
+    values = jnp.stack([Ax, Ax * 2, Ax * 3])
+
+    def solve_one(values):
+        num = klujax.factor(Ai, Aj, values, sym)
+        rhs = b if mapped else jnp.broadcast_to(b, (3, 5))
+        x = klujax.solve_with_numeric(num, rhs, sym)
+        klujax.free_numeric(num, dependency=x)
+        return x
+
+    run = jax.jit(jax.vmap(solve_one) if mapped else solve_one)
+    A = jnp.zeros((5, 5), dtype=dtype).at[Ai, Aj].add(Ax)
+    expected = jsp.linalg.solve(A, b)[None] / jnp.arange(1, 4)[:, None]
+    gc.collect()
+    live_before, total_before = klujax.klujax_cpp._numeric_allocation_counts()
+    for _ in range(3):
+        result = run(values).block_until_ready()
+        np.testing.assert_allclose(result, expected, rtol=1e-10)
+        live, total = klujax.klujax_cpp._numeric_allocation_counts()
+        assert live == live_before
+        assert total - total_before == 3
+        total_before = total
+
+
+def test_raw_free_requires_dependency():
+    @jax.jit
+    def free(raw):
+        return klujax.free_numeric(raw)
+
+    with pytest.raises(ValueError, match="require dependency"):
+        free(jnp.zeros(1, dtype=jnp.uint64))
+
+
+@pytest.mark.parametrize("with_dependency", [False, True])
+def test_eager_numeric_cannot_be_freed_during_tracing(with_dependency):
+    Ai, Aj, Ax, b = _get_rand_arrs_1d(15, 5, dtype=np.float64)
+    sym = klujax.analyze(Ai, Aj, 5)
+    num = klujax.factor(Ai, Aj, Ax, sym)
+
+    @jax.jit
+    def run(rhs):
+        x = klujax.solve_with_numeric(num, rhs, sym)
+        klujax.free_numeric(num, dependency=x if with_dependency else None)
+        return x
+
+    with pytest.raises(ValueError, match="Close eager numeric owners outside"):
+        run(b)
+    # Rejecting the trace must leave the eager owner usable.
+    klujax.solve_with_numeric(num, b, sym).block_until_ready()
+
+
+def test_vmap_free_rejects_shared_numeric():
+    raw = jnp.zeros(1, dtype=jnp.uint64)
+    with pytest.raises(ValueError, match="shared numeric handle"):
+        jax.jit(jax.vmap(lambda x: klujax.free_numeric(raw, dependency=x)))(
+            jnp.ones((3, 5))
+        )
