@@ -115,3 +115,19 @@ mapped consumers instead. Never use a raw handle after freeing it.
 This form is supported and emits no deprecation warning. Eager `KLUNumeric`
 owners still use automatic cleanup or `close()` after synchronizing consumers;
 calling `free_numeric` on such an owner inside tracing is rejected.
+
+
+### Autodiff limitation
+
+Raw numeric-handle solves are forward-only. A forward `dependency` does not
+cover the transpose solves introduced during reverse-mode differentiation.
+Differentiating `solve_with_numeric` or `tsolve_with_numeric` with a raw handle
+therefore raises a `ValueError` during tracing, before the unsafe program can
+execute. Applying `stop_gradient` to the free's dependency does not bypass this
+check. Do not add a no-op differentiation rule to `free_numeric`.
+
+For differentiable compiled loops, use `solve_with_symbol`, which owns its
+numeric temporaries within each solve. Alternatively, create a `KLUNumeric`
+owner eagerly, use `solve_with_numeric` to differentiate with respect to the
+right-hand side, and keep the owner alive until all gradient results are ready.
+Call `close()` only after that synchronization, outside the compiled execution.

@@ -472,6 +472,24 @@ def refactor(
     return numeric
 
 
+@jax.custom_jvp
+def _raw_numeric_rhs(b: Array) -> Array:
+    """Keep raw-handle solves forward-only until their lifetime supports AD."""
+    return b
+
+
+@_raw_numeric_rhs.defjvp
+def _raw_numeric_rhs_jvp(primals, tangents):
+    # A forward dependency cannot extend a manually freed handle's lifetime
+    # through an AD-generated solve, even if the free dependency is stopped.
+    msg = (
+        "Autodiff through raw numeric handles is unsupported: free_numeric "
+        "cannot order cleanup after backward consumers. Use solve_with_symbol "
+        "or an eager KLUNumeric owner kept alive through differentiation."
+    )
+    raise ValueError(msg)
+
+
 @jax.jit
 def _solve_with_numeric_jit(num_h: Array, b: Array, sym_h: Array) -> Array:
     prim = (
@@ -492,10 +510,16 @@ def solve_with_numeric(
         b:  [n_lhs? x n_col x n_rhs?; float64|complex128]: the target vector
         symbolic: [KLUSymbolic|Array]: the symbolic analysis object or handle
 
+    Raw handles support forward execution only. For autodiff, use
+    solve_with_symbol or keep an eager KLUNumeric owner alive through the
+    complete differentiated execution.
+
     Returns:
         x: the result (x≈A^-1b)
 
     """
+    if not isinstance(numeric, klujax_cpp.KLUNumeric):
+        b = _raw_numeric_rhs(b)
     num_h = _get_numeric_handle(numeric)
     sym_h = _get_symbolic_handle(symbolic)
     return _solve_with_numeric_jit(num_h, b, sym_h)
@@ -528,10 +552,15 @@ def tsolve_with_numeric(
         b:  [n_lhs? x n_col x n_rhs?; float64|complex128]: the target vector
         symbolic: [KLUSymbolic|Array]: the symbolic analysis object or handle
 
+    Raw handles support forward execution only. Autodiff through a raw handle
+    is rejected because manual cleanup cannot cover backward consumers.
+
     Returns:
         x: the result (x≈(A^T)^-1 b)
 
     """
+    if not isinstance(numeric, klujax_cpp.KLUNumeric):
+        b = _raw_numeric_rhs(b)
     num_h = _get_numeric_handle(numeric)
     sym_h = _get_symbolic_handle(symbolic)
     return _tsolve_with_numeric_jit(num_h, b, sym_h)

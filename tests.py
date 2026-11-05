@@ -843,3 +843,84 @@ def test_vmap_free_rejects_shared_numeric():
         jax.jit(jax.vmap(lambda x: klujax.free_numeric(raw, dependency=x)))(
             jnp.ones((3, 5))
         )
+
+
+@pytest.mark.parametrize("dtype", [np.float64, np.complex128])
+@pytest.mark.parametrize("stopped_dependency", [False, True])
+@pytest.mark.parametrize("in_loop", [False, True])
+@pytest.mark.parametrize("transpose", [False, True])
+@pytest.mark.parametrize("transform", ["grad", "jvp", "vjp"])
+def test_raw_numeric_autodiff_rejected(
+    dtype, stopped_dependency, in_loop, transpose, transform
+):
+    """Reject before execution, including the stopped-dependency UAF reproducer."""
+    Ai, Aj, Ax, b = _get_rand_arrs_1d(15, 5, dtype=dtype)
+    sym = klujax.analyze(Ai, Aj, 5)
+    solve = klujax.tsolve_with_numeric if transpose else klujax.solve_with_numeric
+
+    def objective(rhs):
+        def body(i, total):
+            num = klujax.factor(Ai, Aj, Ax * (1 + 0.01 * i), sym)
+            x = solve(num, rhs, sym)
+            dependency = lax.stop_gradient(x) if stopped_dependency else x
+            klujax.free_numeric(num, dependency=dependency)
+            return total + jnp.real(jnp.vdot(x, x))
+
+        return lax.fori_loop(0, 3, body, 0.0) if in_loop else body(0, 0.0)
+
+    if transform == "grad":
+        differentiated = jax.grad(objective)
+    elif transform == "jvp":
+
+        def differentiated(rhs):
+            return jax.jvp(objective, (rhs,), (jnp.ones_like(rhs),))
+
+    else:
+
+        def differentiated(rhs):
+            return jax.vjp(objective, rhs)[1](1.0)
+
+    gc.collect()
+    counts_before = klujax.klujax_cpp._numeric_allocation_counts()
+    # Lower rather than execute: the old stopped-dependency graph can use freed
+    # memory. This must fail during tracing, before any native allocations.
+    with pytest.raises(ValueError, match="Autodiff through raw numeric handles"):
+        jax.jit(differentiated).lower(b)
+    assert klujax.klujax_cpp._numeric_allocation_counts() == counts_before
+
+
+@pytest.mark.parametrize("dtype", [np.float64, np.complex128])
+@pytest.mark.parametrize("eager_numeric", [False, True])
+def test_supported_numeric_autodiff_lifetime(dtype, eager_numeric):
+    """Supported alternatives preserve gradients and bounded allocations in loops."""
+    Ai, Aj, Ax, b = _get_rand_arrs_1d(15, 5, dtype=dtype)
+    sym = klujax.analyze(Ai, Aj, 5)
+    numeric = klujax.factor(Ai, Aj, Ax, sym) if eager_numeric else None
+    A = jnp.zeros((5, 5), dtype=dtype).at[Ai, Aj].add(Ax)
+
+    def objective(rhs):
+        def body(i, total):
+            x = (
+                klujax.solve_with_numeric(numeric, rhs + i, sym)
+                if eager_numeric
+                else klujax.solve_with_symbol(Ai, Aj, Ax, rhs + i, sym)
+            )
+            return total + jnp.real(jnp.vdot(x, x))
+
+        return lax.fori_loop(0, 3, body, 0.0)
+
+    def dense_objective(rhs):
+        solutions = [jsp.linalg.solve(A, rhs + i) for i in range(3)]
+        return sum(jnp.real(jnp.vdot(x, x)) for x in solutions)
+
+    expected = jax.value_and_grad(dense_objective)(b)
+    run = jax.jit(jax.value_and_grad(objective))
+    gc.collect()
+    counts_before = klujax.klujax_cpp._numeric_allocation_counts()
+    for _ in range(3):
+        value, gradient = jax.block_until_ready(run(b))
+        np.testing.assert_allclose(value, expected[0], rtol=1e-10)
+        np.testing.assert_allclose(gradient, expected[1], rtol=1e-10)
+        assert klujax.klujax_cpp._numeric_allocation_counts() == counts_before
+    if numeric is not None:
+        numeric.close()
