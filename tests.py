@@ -860,13 +860,23 @@ def test_compiled_refactor_updates_raw_numeric(dtype, fused, mapped):
     assert total - total_before == (3 if mapped else 1)
 
 
-def test_raw_free_requires_dependency():
-    @jax.jit
-    def free(raw):
-        return klujax.free_numeric(raw)
+def test_raw_free_without_dependency_warns_and_skips_free():
+    Ai, Aj, Ax, b = _get_rand_arrs_1d(15, 5, dtype=np.float64)
+    sym = klujax.analyze(Ai, Aj, 5)
 
-    with pytest.raises(ValueError, match="require dependency"):
-        free(jnp.zeros(1, dtype=jnp.uint64))
+    @jax.jit
+    def run(values):
+        num = klujax.factor(Ai, Aj, values, sym)
+        x = klujax.solve_with_numeric(num, b, sym)
+        klujax.free_numeric(num)  # 0.5.x call pattern: accepted, but nothing freed
+        return x
+
+    gc.collect()
+    live_before, _ = klujax.klujax_cpp._numeric_allocation_counts()
+    with pytest.warns(FutureWarning, match="without dependency"):
+        run(Ax).block_until_ready()
+    live, _ = klujax.klujax_cpp._numeric_allocation_counts()
+    assert live == live_before + 1  # documented leak; never a premature free
 
 
 @pytest.mark.parametrize("with_dependency", [False, True])

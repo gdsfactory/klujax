@@ -106,7 +106,9 @@ def run(n_iter, values, b):
 ```
 
 `dependency` must contain every consumer result; it can be an array or pytree.
-Raw handles require this argument. Freeing and allocation are side effects, so
+Raw handles need this argument to be freed. In 0.5.x, omitting it emits a
+`FutureWarning` and skips the free, so the handle leaks; 0.6.0 will raise.
+Freeing and allocation are side effects, so
 an unused status or loop-invariant matrix does not remove or hoist these calls.
 The native free releases all pointers in a batched allocation. Mapping over a
 shared numeric handle while freeing it is rejected; free it once after the

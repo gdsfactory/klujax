@@ -243,8 +243,17 @@ def free_numeric(numeric: Any, dependency: Any = None) -> Array:  # noqa: ANN401
         numeric.close()
         return jnp.array(0, dtype=jnp.int32)
     if dependency is None:
-        msg = "Raw numeric handles require dependency containing all consumer results"
-        raise ValueError(msg)
+        # Patch-release compatibility: 0.5.1/0.5.2 accepted this call as a no-op.
+        # Without consumer results the free cannot be ordered safely, so it is
+        # still skipped (the handle leaks). This becomes an error in 0.6.0.
+        warnings.warn(
+            "free_numeric(raw_handle) without dependency does not free the handle "
+            "and leaks native memory; pass dependency=<all consumer results>. "
+            "This will raise in klujax 0.6.0.",
+            FutureWarning,
+            stacklevel=2,
+        )
+        return jnp.array(0, dtype=jnp.int32)
     # The native handler ignores the values, but XLA must materialize every
     # operand before freeing. Flattening also supports multiple consumer results.
     leaves = jax.tree_util.tree_leaves(dependency)
