@@ -2,7 +2,7 @@
 
 # Metadata ============================================================================
 
-__version__ = "0.5.2"
+__version__ = "0.5.3"
 __author__ = "Floris Laporte"
 __all__ = [
     "KLUHandleManager",
