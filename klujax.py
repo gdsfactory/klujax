@@ -463,13 +463,17 @@ def refactor(
         symbolic: [KLUSymbolic|Array]: the symbolic analysis object or handle
 
     Returns:
-        numeric: the same handle, updated in-place
+        numeric: the same handle, updated in-place. For a raw handle (for
+            example one created by factor() inside jit), this is the refactor
+            output. Pass it to later solves, refactors and free_numeric:
+            consumers of the input handle are not ordered after the refactor,
+            and an unused refactor is removed as dead code.
 
     """
     num_h = _get_numeric_handle(numeric)
     sym_h = _get_symbolic_handle(symbolic)
-    _refactor_jit(Ai, Aj, Ax, sym_h, num_h)
-    return numeric
+    refreshed = _refactor_jit(Ai, Aj, Ax, sym_h, num_h)
+    return numeric if isinstance(numeric, klujax_cpp.KLUNumeric) else refreshed
 
 
 @jax.custom_jvp
@@ -615,13 +619,15 @@ def refactor_and_solve(
         symbolic: [KLUSymbolic|Array]: the symbolic analysis object or handle
 
     Returns:
-        (x, numeric): solution array and the same numeric handle
+        (x, numeric): solution array and the same numeric handle. For a raw
+            handle, numeric is the kernel output; later consumers must use it to
+            be ordered after the refactorization (see refactor()).
 
     """
     num_h = _get_numeric_handle(numeric)
     sym_h = _get_symbolic_handle(symbolic)
-    x, _ = _refactor_and_solve_jit(Ai, Aj, Ax, b, sym_h, num_h)
-    return x, numeric
+    x, refreshed = _refactor_and_solve_jit(Ai, Aj, Ax, b, sym_h, num_h)
+    return x, numeric if isinstance(numeric, klujax_cpp.KLUNumeric) else refreshed
 
 
 # Primitives ==========================================================================

@@ -810,6 +810,56 @@ def test_compiled_numeric_lifetime_batched(dtype, mapped):
         total_before = total
 
 
+@pytest.mark.parametrize("dtype", [np.float64, np.complex128])
+# refactor_and_solve has no batching rule, so the fused path is not vmapped.
+@pytest.mark.parametrize(
+    ("fused", "mapped"), [(False, False), (False, True), (True, False)]
+)
+def test_compiled_refactor_updates_raw_numeric(dtype, fused, mapped):
+    """Inside jit, solves through the returned handle see the refactored values.
+
+    Regression: refactor() returned its input handle, so the unused refactor
+    primitive was dead-code eliminated and solves used the original factors.
+    """
+    Ai, Aj, Ax, b = _get_rand_arrs_1d(15, 5, dtype=dtype)
+    Ax2 = _make_ax2(Ai, Aj, Ax, dtype=dtype)
+    sym = klujax.analyze(Ai, Aj, 5)
+
+    def solve(values, new_values):
+        num = klujax.factor(Ai, Aj, values, sym)
+
+        def body(i, carry):
+            num, _ = carry
+            target = new_values * (1 + i)  # the matrix changes every iteration
+            if fused:
+                x, num = klujax.refactor_and_solve(Ai, Aj, target, b, num, sym)
+            else:
+                num = klujax.refactor(Ai, Aj, target, num, sym)
+                x = klujax.solve_with_numeric(num, b, sym)
+            return num, x.reshape(b.shape)
+
+        num, x = lax.fori_loop(0, 3, body, (num, jnp.zeros_like(b)))
+        y = klujax.solve_with_numeric(num, b, sym).reshape(b.shape)
+        klujax.free_numeric(num, dependency=(x, y))
+        return x, y
+
+    scales = jnp.arange(1, 4, dtype=dtype)[:, None]
+    run = jax.jit(jax.vmap(solve) if mapped else solve)
+    values, new_values = (Ax * scales, Ax2 * scales) if mapped else (Ax, Ax2)
+    A2 = jnp.zeros((5, 5), dtype=dtype).at[Ai, Aj].add(Ax2)
+    # The last refactor uses 3 * new_values.
+    expected = jsp.linalg.solve(3 * A2, b)
+    expected = expected[None] / scales if mapped else expected
+    gc.collect()
+    live_before, total_before = klujax.klujax_cpp._numeric_allocation_counts()
+    x, y = run(values, new_values)
+    np.testing.assert_allclose(x, expected, rtol=1e-10)
+    np.testing.assert_allclose(y, expected, rtol=1e-10)
+    live, total = klujax.klujax_cpp._numeric_allocation_counts()
+    assert live == live_before
+    assert total - total_before == (3 if mapped else 1)
+
+
 def test_raw_free_requires_dependency():
     @jax.jit
     def free(raw):
