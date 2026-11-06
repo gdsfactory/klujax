@@ -84,3 +84,50 @@ with klujax.analyze(Ai, Aj, n_col) as symbolic:
 
 !!! tip
     The best practice is to create handles **outside** JIT. Then you never need `free_symbolic` or `free_numeric` at all. See [Memory Management](../advanced/memory-management.md).
+
+
+## Numeric allocations in compiled loops
+
+Keep the symbolic owner outside compiled code. Each numeric allocation made by
+`factor` inside `jit` or `vmap` requires exactly one runtime `free_numeric`:
+
+```python
+symbolic = klujax.analyze(Ai, Aj, n_col)
+
+@jax.jit
+def run(n_iter, values, b):
+    def body(i, total):
+        numeric = klujax.factor(Ai, Aj, values * (1 + 1e-6 * i), symbolic)
+        x = klujax.solve_with_numeric(numeric, b, symbolic)
+        y = klujax.tsolve_with_numeric(numeric, b, symbolic)
+        klujax.free_numeric(numeric, dependency=(x, y))
+        return total + x[0] + y[0]
+    return jax.lax.fori_loop(0, n_iter, body, 0.0)
+```
+
+`dependency` must contain every consumer result; it can be an array or pytree.
+Raw handles require this argument. Freeing and allocation are side effects, so
+an unused status or loop-invariant matrix does not remove or hoist these calls.
+The native free releases all pointers in a batched allocation. Mapping over a
+shared numeric handle while freeing it is rejected; free it once after the
+mapped consumers instead. Never use a raw handle after freeing it.
+
+This form is supported and emits no deprecation warning. Eager `KLUNumeric`
+owners still use automatic cleanup or `close()` after synchronizing consumers;
+calling `free_numeric` on such an owner inside tracing is rejected.
+
+
+### Autodiff limitation
+
+Raw numeric-handle solves are forward-only. A forward `dependency` does not
+cover the transpose solves introduced during reverse-mode differentiation.
+Differentiating `solve_with_numeric` or `tsolve_with_numeric` with a raw handle
+therefore raises a `ValueError` during tracing, before the unsafe program can
+execute. Applying `stop_gradient` to the free's dependency does not bypass this
+check. Do not add a no-op differentiation rule to `free_numeric`.
+
+For differentiable compiled loops, use `solve_with_symbol`, which owns its
+numeric temporaries within each solve. Alternatively, create a `KLUNumeric`
+owner eagerly, use `solve_with_numeric` to differentiate with respect to the
+right-hand side, and keep the owner alive until all gradient results are ready.
+Call `close()` only after that synchronization, outside the compiled execution.

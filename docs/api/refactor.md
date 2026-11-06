@@ -75,6 +75,25 @@ for t in range(num_steps):
 
 `refactor` is most useful in time-stepping simulations where the matrix values change at every step but the sparsity pattern stays the same.
 
+## Inside JIT: use the returned handle
+
+For a raw handle, such as one returned by `factor` inside `jax.jit`, `refactor`
+returns the output of the refactor operation. Pass that returned handle to later
+`solve_with_numeric`, `refactor` and `free_numeric` calls. XLA orders operations
+only by data dependencies. A solve on the *input* handle may therefore run
+before the refactor, and a refactor whose result is unused is removed as dead
+code. The same applies to the handle returned by `refactor_and_solve`.
+
+```python
+@jax.jit
+def newton_step(Ax_pred, Ax_new, b):
+    numeric = klujax.factor(Ai, Aj, Ax_pred, symbolic)
+    numeric = klujax.refactor(Ai, Aj, Ax_new, numeric, symbolic)  # keep the result
+    x = klujax.solve_with_numeric(numeric, b, symbolic)
+    klujax.free_numeric(numeric, dependency=x)
+    return x
+```
+
 ## JAX Features
 
 | Feature    | Supported                      |

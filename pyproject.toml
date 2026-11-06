@@ -21,7 +21,7 @@ docs = [
 
 [project]
 authors = [
-  {name = "Floris Laporte", email = "floris.laporte@gmail.com"}
+  { name = "Floris Laporte", email = "floris.laporte@gmail.com" }
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",
